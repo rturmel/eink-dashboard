@@ -1,0 +1,14 @@
+# Copy this file to config.yaml and edit, or leave it as-is and set
+# DASHBOARD_TOKEN as an environment variable instead (recommended if you're
+# hosting this on AWS or anywhere reachable from outside your LAN -- keeps
+# the secret out of a file that might end up in git).
+
+host: "0.0.0.0"
+port: 8080
+
+# Shared secret every publisher and client must present. Generate one with:
+#   python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+token: "CHANGE_ME_TO_A_LONG_RANDOM_STRING"
+
+state_file: "./data/state.json"
+layout_file: "../shared/dashboard_render/layout.example.yaml"

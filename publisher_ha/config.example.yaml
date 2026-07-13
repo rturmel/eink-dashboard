@@ -1,0 +1,15 @@
+# Copy to config.yaml and edit, or set HA_URL / HA_TOKEN / BROKER_URL /
+# DASHBOARD_TOKEN as env vars instead.
+
+ha_url: "http://homeassistant.local:8123"
+ha_token: "PASTE_YOUR_HA_LONG_LIVED_ACCESS_TOKEN_HERE"
+
+broker_url: "http://YOUR-BROKER-HOST:8080"
+broker_token: "CHANGE_ME_TO_MATCH_BROKER"
+
+# How long to wait after an entity change before pushing to the broker, to
+# coalesce bursts (e.g. several sensors updating within the same second).
+# This is independent of, and much shorter than, the Pi client's own
+# refresh debounce -- the broker/preview can update often; only the
+# physical panel refresh is rate-limited.
+debounce_seconds: 2

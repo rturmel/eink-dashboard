@@ -1,0 +1,99 @@
+# Example dashboard layout for the Waveshare 10.85" e-Paper HAT+ (G), 1360x480.
+#
+# The grid is `cols` x `rows` cells spanning the whole panel. Each widget
+# claims a rectangle of cells via x/y (top-left, 0-indexed) and w/h (size in
+# cells). Nothing here talks about Home Assistant -- widgets only know about
+# generic "widget ids"; a publisher (e.g. publisher_ha) is responsible for
+# pushing data shaped correctly for each widget's `type` to the broker under
+# that id. See docs/WIDGETS.md for the payload shape each type expects.
+#
+# This file is served by the broker at GET /api/v1/layout so the Pi client
+# and preview never need a local copy -- edit it in one place.
+
+grid:
+  cols: 12
+  rows: 6
+
+widgets:
+  - id: header
+    type: header
+    x: 0
+    y: 0
+    w: 12
+    h: 1
+    title: "Home Dashboard"   # default/fallback if a publisher doesn't send one
+
+  - id: weather_outdoor
+    type: weather
+    x: 0
+    y: 1
+    w: 4
+    h: 2
+    title: "Outdoor"
+
+  - id: metric_indoor_temp
+    type: metric
+    x: 4
+    y: 1
+    w: 2
+    h: 2
+    title: "Indoor"
+
+  - id: metric_indoor_humidity
+    type: metric
+    x: 6
+    y: 1
+    w: 2
+    h: 2
+    title: "Humidity"
+
+  - id: list_status
+    type: text_list
+    x: 8
+    y: 1
+    w: 4
+    h: 2
+    title: "Status"
+
+  - id: agenda_today
+    type: calendar
+    x: 0
+    y: 3
+    w: 6
+    h: 2
+    title: "Today"
+
+  # "panel" is purely decorative -- a border + label grouping the two
+  # widgets below into one visual box. It needs no publisher/data of its
+  # own (see docs/WIDGETS.md#panel-decorative-grouping-box); give it the
+  # union rectangle of the widgets it's grouping.
+  - id: ups_panel
+    type: panel
+    x: 6
+    y: 3
+    w: 6
+    h: 2
+    title: "UPS"
+
+  - id: ups_battery
+    type: progress
+    x: 6
+    y: 3
+    w: 3
+    h: 2
+    title: "UPS Battery"
+
+  - id: ups_load
+    type: metric
+    x: 9
+    y: 3
+    w: 3
+    h: 2
+    title: "UPS Load"
+
+  - id: ups_alert
+    type: alert_banner
+    x: 0
+    y: 5
+    w: 12
+    h: 1

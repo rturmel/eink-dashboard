@@ -1,0 +1,16 @@
+websockets>=12.0
+Pillow>=10.0
+PyYAML>=6.0
+# Used by shared/dashboard_render/palette.py for fast, correct final-frame
+# color quantization (see quantize_exact()). Raspberry Pi OS's pip is
+# pre-configured to use piwheels.org, which publishes prebuilt numpy wheels
+# for the Pi Zero's armv6l -- this should install quickly, not compile from
+# source. If it's ever unavailable, rendering falls back automatically to a
+# slower, slightly less accurate method rather than failing.
+numpy>=1.24
+
+# waveshare_epd (the vendor display driver) and its own dependencies
+# (spidev, gpiozero/RPi.GPIO) are installed separately by install.sh --
+# they only work on the actual Raspberry Pi hardware, so keeping them out
+# of this file lets you `pip install -r requirements.txt` on a laptop for
+# dry-run development.

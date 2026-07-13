@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>E-Ink Dashboard Preview</title>
+<style>
+  body {
+    background: #2b2b2b;
+    color: #e8e8e8;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 32px 16px;
+    margin: 0;
+  }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: #9a9a9a; font-size: 13px; margin-bottom: 20px; text-align: center; max-width: 620px; }
+  .bezel {
+    background: #111;
+    padding: 22px;
+    border-radius: 10px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+  }
+  .screen {
+    /* Rendered natively at 1360x480 (the panel's real resolution) --
+       display it at that size on anything wide enough so text stays
+       crisp; only shrink (preserving aspect ratio) on narrower screens
+       instead of always downscaling from a fixed, smaller width. */
+    position: relative;
+    width: 1360px;
+    max-width: 95vw;
+  }
+  .screen img {
+    display: block;
+    width: 100%;
+    height: auto;
+    image-rendering: pixelated;
+  }
+  #frame { background: #fff; }
+  #grid {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+    display: none;
+  }
+  #grid.visible { display: block; }
+  .fullsize { font-size: 12px; margin-top: 8px; }
+  .fullsize a { color: #9a9a9a; }
+  .controls { margin-top: 20px; display: flex; gap: 16px; align-items: center; }
+  button {
+    background: #3a3a3a;
+    color: #fff;
+    border: 1px solid #555;
+    padding: 8px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  button:hover { background: #484848; }
+  .status { font-size: 12px; color: #7a7a7a; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: #999; }
+  .dot.live { background: #4caf50; }
+  .dot.down { background: #d9534f; }
+  .grid-toggle { font-size: 13px; color: #ccc; display: flex; align-items: center; gap: 6px; }
+  .grid-toggle select {
+    background: #3a3a3a;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+  <h1>E-Ink Dashboard Preview</h1>
+  <p class="sub">
+    Live view of what the broker currently holds -- updates as soon as a publisher
+    pushes new data. The physical panel refreshes less often (it debounces and
+    coalesces updates to protect the hardware), so this preview may be a few
+    minutes ahead of what's actually on the e-ink display.
+  </p>
+  <div class="bezel">
+    <div class="screen">
+      <img id="frame" src="/frame.png" alt="dashboard preview" />
+      <img id="grid" src="/grid.png" alt="layout grid overlay" />
+    </div>
+  </div>
+  <p class="fullsize"><a id="fullsize-link" href="/frame.png" target="_blank" rel="noopener">open full-resolution PNG</a> (bypasses any browser scaling entirely)</p>
+  <div class="controls">
+    <span class="status"><span class="dot" id="dot"></span><span id="status-text">connecting…</span></span>
+    <button id="demo-btn">Load demo data</button>
+    <label class="grid-toggle">
+      Grid overlay:
+      <select id="grid-select">
+        <option value="off" selected>Off</option>
+        <option value="layout">Current layout's grid</option>
+        <option value="24x12">Compare: 24 x 12</option>
+      </select>
+    </label>
+  </div>
+
+<script>
+  const img = document.getElementById('frame');
+  const gridImg = document.getElementById('grid');
+  const gridSelect = document.getElementById('grid-select');
+  const dot = document.getElementById('dot');
+  const statusText = document.getElementById('status-text');
+  let lastVersion = -1;
+
+  // Grid presets: "layout" mirrors whatever the currently-loaded layout.yaml
+  // actually defines (no cols/rows override); any other key here is a pure
+  // what-if comparison rendered independently of the real layout, for
+  // planning ahead of getting the physical panel.
+  const GRID_PRESETS = {
+    'layout': {},
+    '24x12': { cols: 24, rows: 12 },
+  };
+
+  function updateGrid() {
+    const mode = gridSelect.value;
+    if (mode === 'off') {
+      gridImg.classList.remove('visible');
+      return;
+    }
+    const preset = GRID_PRESETS[mode] || {};
+    const params = new URLSearchParams({ v: lastVersion });
+    if (preset.cols) params.set('cols', preset.cols);
+    if (preset.rows) params.set('rows', preset.rows);
+    gridImg.src = '/grid.png?' + params.toString();
+    gridImg.classList.add('visible');
+  }
+
+  async function poll() {
+    try {
+      const res = await fetch('/api/version');
+      const body = await res.json();
+      dot.className = 'dot live';
+      statusText.textContent = 'live';
+      if (body.version !== lastVersion) {
+        lastVersion = body.version;
+        img.src = '/frame.png?v=' + lastVersion;
+        document.getElementById('fullsize-link').href = '/frame.png?v=' + lastVersion;
+        // Grid dimensions only change when the layout itself changes, but a
+        // version bump is the only signal we get for that -- cheap enough
+        // to just refresh it every time too (only matters while visible).
+        if (gridSelect.value !== 'off') updateGrid();
+      }
+    } catch (e) {
+      dot.className = 'dot down';
+      statusText.textContent = 'preview server unreachable';
+    }
+  }
+
+  document.getElementById('demo-btn').addEventListener('click', async () => {
+    statusText.textContent = 'loading demo data…';
+    await fetch('/api/demo', { method: 'POST' });
+  });
+
+  gridSelect.addEventListener('change', updateGrid);
+
+  poll();
+  setInterval(poll, 2000);
+</script>
+</body>
+</html>

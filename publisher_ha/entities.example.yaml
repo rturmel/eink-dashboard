@@ -1,0 +1,91 @@
+# Maps Home Assistant entities to dashboard widget payload fields. This is
+# the ONLY file that knows about your specific HA entity ids -- the broker
+# and the Pi client never see them, they only see widget ids/types defined
+# in shared/dashboard_render/layout.example.yaml. Copy this to entities.yaml
+# and point each `entity:` at your own entity ids.
+#
+# Field value sources:
+#   {static: "some value"}                          -- fixed value
+#   {entity: sensor.foo, attribute: state}           -- entity's state string
+#   {entity: sensor.foo, attribute: attributes.bar}  -- nested attribute
+#   ... optionally with `round: 0` (numeric rounding) or
+#       `map: {"on": "Open", "off": "Closed"}` (value translation)
+#
+# Top-level keys must match widget ids in your layout file.
+
+widgets:
+  weather_outdoor:
+    type: weather
+    fields:
+      condition: {entity: weather.home, attribute: state}
+      temp: {entity: weather.home, attribute: attributes.temperature, round: 0}
+      humidity: {entity: weather.home, attribute: attributes.humidity, round: 0}
+      temp_unit: {static: "°F"}
+
+  metric_indoor_temp:
+    type: metric
+    fields:
+      label: {static: "Indoor"}
+      value: {entity: sensor.living_room_temperature, attribute: state, round: 0}
+      unit: {static: "°F"}
+
+  metric_indoor_humidity:
+    type: metric
+    fields:
+      label: {static: "Humidity"}
+      value: {entity: sensor.living_room_humidity, attribute: state, round: 0}
+      unit: {static: "%"}
+
+  list_status:
+    type: text_list
+    items:
+      - label: {static: "Front Door"}
+        value:
+          entity: lock.front_door
+          attribute: state
+          map: {locked: "Locked", unlocked: "Unlocked"}
+      - label: {static: "Garage"}
+        value:
+          entity: cover.garage_door
+          attribute: state
+          map: {closed: "Closed", open: "Open"}
+      - label: {static: "Alarm"}
+        value:
+          entity: alarm_control_panel.home
+          attribute: state
+          map: {armed_home: "Armed (Home)", armed_away: "Armed (Away)", disarmed: "Disarmed"}
+
+  # Real calendar entities need an HA service call (calendar.get_events),
+  # which this simple entity->field mapper doesn't do. This widget is left
+  # as static placeholder data here -- see docs/PUBLISHERS.md for how to
+  # extend fetch_ha_state() to pull real events if you want that.
+  agenda_today:
+    type: calendar
+    events:
+      - time: {static: "9:00 AM"}
+        title: {static: "Team standup"}
+      - time: {static: "5:00 PM"}
+        title: {static: "Pick up kids"}
+
+  progress_vacuum:
+    type: progress
+    fields:
+      label: {static: "Vacuum Battery"}
+      value: {entity: sensor.vacuum_battery, attribute: state}
+
+  metric_extra:
+    type: metric
+    fields:
+      label: {static: "Power Use"}
+      value: {entity: sensor.power_meter, attribute: state, round: 1}
+      unit: {static: "kW"}
+
+  alert_banner:
+    type: alert_banner
+    active_if:
+      entity: binary_sensor.garage_door_open_too_long
+      attribute: state
+      equals: "on"
+    fields:
+      level: {static: "warning"}
+      text: {static: "Garage door has been open for a while"}

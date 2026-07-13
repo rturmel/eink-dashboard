@@ -1,0 +1,63 @@
+# Runs the broker + local preview together. The Pi client and the Home
+# Assistant publisher are NOT part of this file -- the Pi client needs
+# direct SPI/GPIO hardware access (not practical in a container), and the
+# HA publisher is meant to run wherever's convenient (often right next to
+# Home Assistant itself), not necessarily on this same host.
+#
+# Quick start:
+#   cp .env.example .env        # then edit .env and set a real token
+#   docker compose up -d --build
+#   curl http://localhost:9090/api/v1/health
+#
+# Host ports are configurable (BROKER_PORT / PREVIEW_PORT in .env) in case
+# 8080/9090 are already taken by something else on this host -- default to
+# 9090 (broker) and 9091 (preview). Internal container ports (8080 for the
+# broker, 9090 for preview) don't need to change -- they're only used for
+# broker<->preview traffic inside Compose's own network, not from outside.
+#
+# This same file works unchanged on a cloud VM later -- copy the repo over
+# and run the same `docker compose up -d --build`. Nothing here is tied to
+# this being a local server.
+
+services:
+  eink-broker:
+    build:
+      context: .
+      dockerfile: broker/Dockerfile
+    ports:
+      - "${BROKER_PORT:-9090}:8080"
+    environment:
+      DASHBOARD_TOKEN: ${DASHBOARD_TOKEN:?Set DASHBOARD_TOKEN in .env -- copy .env.example to .env and fill it in first}
+    volumes:
+      # Persists state.json across container recreation/rebuilds.
+      - eink-broker-data:/app/broker/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/v1/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  eink-preview:
+    build:
+      context: .
+      dockerfile: preview/Dockerfile
+    ports:
+      - "${PREVIEW_PORT:-9091}:9090"
+    environment:
+      DASHBOARD_TOKEN: ${DASHBOARD_TOKEN:?Set DASHBOARD_TOKEN in .env -- copy .env.example to .env and fill it in first}
+      # "eink-broker" resolves via Docker Compose's built-in DNS to the
+      # broker container -- no IP addresses to hardcode, and it keeps
+      # working unchanged if this whole file moves to a different host
+      # later. The "eink-" prefix keeps these names from colliding with
+      # other services/volumes if you're running multiple versions of
+      # this stack side by side.
+      BROKER_URL: http://eink-broker:8080
+    depends_on:
+      eink-broker:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  eink-broker-data:

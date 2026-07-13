@@ -1,0 +1,27 @@
+# Copy to config.yaml and edit (or set BROKER_URL / DASHBOARD_TOKEN as env
+# vars instead, e.g. from the systemd unit -- see systemd/eink-dashboard.service).
+
+# http(s):// is fine too, it gets upgraded to ws(s):// automatically.
+broker_url: "ws://YOUR-BROKER-HOST:8080"
+token: "CHANGE_ME_TO_MATCH_BROKER"
+
+# Minimum seconds between physical panel refreshes. Waveshare recommends
+# >=180s for multi-color e-Paper panels like the 10.85" (G) -- refreshing
+# faster can accelerate wear. Multiple broker updates arriving within this
+# window get coalesced into a single refresh using the latest data.
+min_refresh_interval_seconds: 180
+
+# Force a refresh at least this often even with zero data changes, so the
+# panel is never left un-refreshed longer than Waveshare's recommended 24h
+# max (prevents ghosting/burn-in). 6 hours is a reasonable default.
+force_refresh_seconds: 21600
+
+# Set true to run this client without e-Paper hardware attached (e.g. while
+# developing on a laptop) -- it writes each rendered frame as a PNG instead
+# of touching SPI.
+dry_run: false
+dry_run_output: "./preview_frame.png"
+
+# 0, 90, 180, or 270 -- rotate the final image if the panel is mounted
+# sideways or upside-down in your case.
+rotate_degrees: 0

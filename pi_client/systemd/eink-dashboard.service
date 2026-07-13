@@ -1,0 +1,17 @@
+[Unit]
+Description=E-Ink Dashboard client (Waveshare 10.85in HAT+ G)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__PI_CLIENT_DIR__
+ExecStart=__PI_CLIENT_DIR__/venv/bin/python __PI_CLIENT_DIR__/client.py --config __PI_CLIENT_DIR__/config.yaml
+Restart=on-failure
+RestartSec=5
+# The client itself retries the broker connection forever, so systemd
+# restarts are only a safety net for the process crashing outright.
+User=pi
+
+[Install]
+WantedBy=multi-user.target
