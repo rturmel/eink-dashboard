@@ -1,0 +1,33 @@
+# Copy to rooms.yaml and replace each entity id below with your actual
+# Bluetooth thermometer/hygrometer entity ids from Home Assistant.
+#
+# Find them in Home Assistant: Settings -> Devices & Services -> Entities
+# (search for the device name), or Developer Tools -> States (search
+# "temperature"/"humidity"/"battery" and look for the room's device).
+# They usually look like sensor.<device_name>_temperature.
+
+rooms:
+  - label: "Etage"
+    temp_entity: "sensor.etage_temperature"
+    humidity_entity: "sensor.etage_humidity"
+    battery_entity: "sensor.etage_battery"
+
+  - label: "Salon"
+    temp_entity: "sensor.salon_temperature"
+    humidity_entity: "sensor.salon_humidity"
+    battery_entity: "sensor.salon_battery"
+
+  - label: "Sous-Sol"
+    temp_entity: "sensor.sous_sol_temperature"
+    humidity_entity: "sensor.sous_sol_humidity"
+    battery_entity: "sensor.sous_sol_battery"
+
+  - label: "Gazebo"
+    temp_entity: "sensor.gazebo_temperature"
+    humidity_entity: "sensor.gazebo_humidity"
+    battery_entity: "sensor.gazebo_battery"
+
+# A room's row is drawn in red in the dashboard table when its battery %
+# is at or below this (matches the same "flag it" convention the
+# progress/UPS widgets already use under 20%).
+low_battery_threshold: 20

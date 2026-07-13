@@ -1,0 +1,73 @@
+# Official dashboard layout -- this is the real one the broker is
+# configured to serve (see docs/SETUP.md "Pointing the broker at this
+# file"). layout.example.yaml stays a separate demo/reference file --
+# it's what "Load demo data" in the preview page pushes sample values
+# for, useful when trying out new widget types without touching this one.
+#
+# See docs/WIDGETS.md for the payload shape each widget `type` expects,
+# and check "Show grid" in the preview page (a numbered x,y overlay) to
+# help plan positions before editing this file.
+
+grid:
+  cols: 12
+  rows: 6
+
+widgets:
+  - id: header
+    type: header
+    x: 0
+    y: 0
+    w: 12
+    h: 1
+    title: "Home Dashboard"
+
+  # Room sensors -- the main content. Full width, 2 rows tall: enough
+  # room for the 4-room table (+ header row) to stay comfortably readable
+  # from a few feet away without crowding out everything else.
+  # See publisher_ha_rooms/publish_rooms.py for what pushes this.
+  - id: rooms_panel
+    type: panel
+    x: 0
+    y: 1
+    w: 12
+    h: 2
+    title: "Rooms"
+
+  - id: rooms_table
+    type: table
+    x: 0
+    y: 1
+    w: 12
+    h: 2
+
+  # UPS status. See publisher_ups/publish_ups.py.
+  - id: ups_panel
+    type: panel
+    x: 0
+    y: 3
+    w: 12
+    h: 2
+    title: "UPS"
+
+  - id: ups_battery
+    type: progress
+    x: 0
+    y: 3
+    w: 6
+    h: 2
+    title: "UPS Battery"
+
+  - id: ups_load
+    type: metric
+    x: 6
+    y: 3
+    w: 6
+    h: 2
+    title: "UPS Load"
+
+  - id: ups_alert
+    type: alert_banner
+    x: 0
+    y: 5
+    w: 12
+    h: 1
