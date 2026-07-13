@@ -1,0 +1,11 @@
+# Keeps the Docker build context (repo root) small and fast, and is
+# defense-in-depth against ever accidentally baking secrets/venvs into an
+# image even if a Dockerfile's COPY commands get broadened later.
+.git
+.env
+**/venv
+**/__pycache__
+**/*.pyc
+**/data
+docs/mockups/*.png
+pi_client/waveshare_epd

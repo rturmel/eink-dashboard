@@ -1,0 +1,12 @@
+venv/
+__pycache__/
+*.pyc
+config.yaml
+entities.yaml
+rooms.yaml
+data/
+*.tmp
+preview_frame.png
+pi_client/waveshare_epd/
+.env
+.DS_Store
