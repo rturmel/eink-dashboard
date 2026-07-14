@@ -89,3 +89,11 @@ widgets:
     fields:
       level: {static: "warning"}
       text: {static: "Garage door has been open for a while"}
+
+  # No "label" field on purpose -- the radon_panel widget already draws
+  # a "RADON" title above this, so the number speaks for itself.
+  radon_metric:
+    type: metric
+    fields:
+      value: {entity: sensor.view_radon_radon, attribute: state, round: 0}
+      unit: {static: " Bq/m³"}

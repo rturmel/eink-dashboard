@@ -74,9 +74,35 @@ docker compose up -d --build eink-broker eink-preview   # rebuild + restart afte
 Open `http://<this-machine's-LAN-IP>:9091` (or whatever `PREVIEW_PORT`
 you set) from any browser on your network to see the preview page.
 
+### Pointing the broker at your own layout.yaml
+
+`shared/dashboard_render/layout.example.yaml` is a demo/reference file --
+what "Load demo data" in the preview page targets when trying out widget
+types. Your real dashboard should live in its own file (e.g.
+`shared/dashboard_render/layout.yaml`, kept separate on purpose so pulling
+future updates to this repo never silently overwrites your actual layout).
+
+Point the broker at it by adding a `layout_file:` line to `broker/config.yaml`
+(the *absolute* path as it exists inside the container, since the Docker
+image's `WORKDIR` is `/app/broker` at runtime, not the repo root):
+
+```yaml
+# broker/config.yaml
+layout_file: "/app/shared/dashboard_render/layout.yaml"
+```
+
+If `broker/config.yaml` doesn't exist yet, `cp broker/config.example.yaml
+broker/config.yaml` first. Since this file lives in `broker/` and gets baked
+into the image (`COPY broker/ broker/` in `broker/Dockerfile`), rebuild
+after any change:
+
+```bash
+docker compose up -d --build eink-broker
+```
+
 **Other machines need the LAN IP, not `localhost`.** The Pi client and
-the Home Assistant/UPS publishers (none of which run in this compose file
-— see sections 2, 3, and 4) connect to the broker from *outside* Docker's
+the Home Assistant/UPS/room-sensor publishers (none of which run in this
+compose file — see sections 2-5) connect to the broker from *outside* Docker's
 internal network, so their `broker_url` needs this server's real address
 and whatever `BROKER_PORT` you set, e.g. `http://192.168.1.50:9090`
 (find the IP with `hostname -I` on this machine). Make sure your
@@ -235,7 +261,72 @@ Adjust `x`/`y`/`w`/`h` to fit wherever's free in your actual layout, and set
 `UPS_WIDGET_PREFIX` (default `ups_`) if you'd rather use different ids --
 just keep the layout's `id`s matching whatever the script pushes.
 
-## 4. Pi client (the physical display)
+## 4. Room sensors publisher (Home Assistant REST API, cron)
+
+For Bluetooth thermometer/hygrometer devices tracked in Home Assistant,
+`publisher_rooms/publish_rooms.py` fetches each room's temperature,
+humidity, and battery %, and pushes a formatted table to the broker. Like
+the UPS publisher, this is a **one-shot script meant for cron** -- your
+Bluetooth integration already polls the devices on its own schedule, so
+there's nothing to subscribe to in real time. Unlike the UPS publisher, it
+needs one dependency (PyYAML, for the room-to-entity mapping file), so it
+uses a small venv rather than being fully dependency-free:
+
+```bash
+cd publisher_rooms
+python3 -m venv venv
+./venv/bin/pip install -r requirements.txt
+cp rooms.example.yaml rooms.yaml   # map YOUR entity ids to each room -- see the comment in the file
+```
+
+Get a long-lived access token the same way as the Home Assistant publisher
+(profile → **Security** → **Long-Lived Access Tokens** → **Create Token**;
+reusing the same token as `publisher_ha` is fine). Then:
+
+```bash
+HA_URL=http://homeassistant.local:8123 HA_TOKEN=your-ha-token \
+  ./venv/bin/python publish_rooms.py --dry-run   # fetches real data, prints the payload, doesn't push
+```
+
+Once that looks right, wire it into cron:
+
+```bash
+crontab -e
+```
+
+```cron
+*/5 * * * * HA_URL=http://homeassistant.local:8123 HA_TOKEN=your-ha-token \
+    BROKER_URL=http://localhost:9090 DASHBOARD_TOKEN=your-broker-token \
+    /path/to/eink_dashboard/publisher_rooms/venv/bin/python3 /path/to/eink_dashboard/publisher_rooms/publish_rooms.py \
+    >> /var/log/rooms_publish.log 2>&1
+```
+
+It pushes one widget, `rooms_table` (`type: table` -- see
+`docs/WIDGETS.md#table`), already set up in the layout snippet below. A
+room's row is drawn in red automatically once its battery drops to (or
+below) `low_battery_threshold` in `rooms.yaml` (default 20), same "flag it"
+convention as the UPS/progress widgets.
+
+```yaml
+  # optional -- draws a border + "Rooms" label around the table below;
+  # see docs/WIDGETS.md#panel-decorative-grouping-box
+  - id: rooms_panel
+    type: panel
+    x: 0
+    y: 1
+    w: 12
+    h: 2
+    title: "Rooms"
+
+  - id: rooms_table
+    type: table
+    x: 0
+    y: 1
+    w: 12
+    h: 2
+```
+
+## 5. Pi client (the physical display)
 
 ### Hardware assembly
 

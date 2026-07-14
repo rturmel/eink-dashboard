@@ -235,6 +235,102 @@ def draw_text_list(ctx: Ctx) -> None:
 
 
 # ---------------------------------------------------------------------------
+# table: a generic multi-column grid -- rows of N cells each, with an
+# optional header row. Doesn't know or care what the columns mean (same
+# spirit as text_list not knowing what its label/value pairs mean) --
+# format each cell as a plain string before pushing it (e.g. "22.1°C",
+# "87%"). First column is left-aligned (meant for a name), every other
+# column is right-aligned (meant for numbers), matching text_list's
+# label/value convention just extended to more columns.
+# ---------------------------------------------------------------------------
+def _table_row_cells(row: Any) -> list:
+    return row.get("cells", []) if isinstance(row, dict) else list(row)
+
+
+def _table_row_color(row: Any) -> str:
+    return row.get("color", "black") if isinstance(row, dict) else "black"
+
+
+def _draw_table_cell(
+    ctx: Ctx, text: str, x0: float, x1: float, y: float, font, color, left: bool
+) -> None:
+    if not text:
+        return
+    if left:
+        ctx.draw.text((x0, y), text, font=font, fill=color)
+    else:
+        tw, _ = _text_size(ctx.draw, text, font)
+        ctx.draw.text((x1 - tw - 6, y), text, font=font, fill=color)
+
+
+def draw_table(ctx: Ctx) -> None:
+    """
+    {
+      "title": "Room Sensors",                            # optional
+      "columns": ["Room", "Temp", "Humidity", "Batt"],    # optional header row
+      "col_widths": [2, 1, 1, 1],                          # optional relative widths, default equal
+      "rows": [
+        ["Etage", "22.1°C", "45%", "87%"],
+        {"cells": ["Gazebo", "15.0°C", "70%", "12%"], "color": "red"}  # optional per-row color override
+      ]
+    }
+    """
+    data = ctx.data or {}
+    raw_rows = data.get("rows", [])
+    if not raw_rows:
+        _placeholder(ctx, "No data")
+        return
+
+    columns = data.get("columns") or []
+    title = data.get("title") or ctx.style.get("title", "")
+    y0 = _title_bar(ctx, title) if title else _inset(ctx.box)[1]
+    x, _, w, _ = _inset(ctx.box)
+    _, top, _, h = ctx.box
+    bottom = top + h - PADDING
+
+    n_cols = max(len(columns), max((len(_table_row_cells(r)) for r in raw_rows), default=1))
+    weights = list(data.get("col_widths") or [1] * n_cols)
+    weights = (weights + [1] * n_cols)[:n_cols]
+    total_weight = sum(weights) or 1
+    edges = [x]
+    acc = 0.0
+    for wgt in weights:
+        acc += wgt
+        edges.append(x + w * (acc / total_weight))
+
+    header_font = get_font(13, bold=True)
+    row_font = get_font(18, bold=False)
+    row_y = y0
+
+    if columns:
+        for i in range(n_cols):
+            label = str(columns[i]).upper() if i < len(columns) else ""
+            _draw_table_cell(
+                ctx, label, edges[i], edges[i + 1], row_y, header_font,
+                palette.color("black"), left=(i == 0),
+            )
+        row_y += 20
+        ctx.draw.line(
+            [(x, row_y - 5), (x + w, row_y - 5)], fill=palette.color("black"), width=1
+        )
+
+    n_rows = len(raw_rows)
+    row_h = max((bottom - row_y) / max(n_rows, 1), 20)
+
+    for r, row in enumerate(raw_rows):
+        ry = row_y + r * row_h
+        if ry > bottom:
+            break
+        cells = _table_row_cells(row)
+        color = palette.color(_table_row_color(row))
+        for i in range(n_cols):
+            text = str(cells[i]) if i < len(cells) else ""
+            _draw_table_cell(
+                ctx, text, edges[i], edges[i + 1], ry, row_font, color, left=(i == 0)
+            )
+
+
+# ---------------------------------------------------------------------------
 # weather: condition icon + current temperature + optional hi/lo
 # ---------------------------------------------------------------------------
 _CONDITION_ALIASES = {
@@ -507,9 +603,34 @@ def _load_image_from_data(data: dict[str, Any]):
     return Image.open(io.BytesIO(raw))
 
 
-def draw_image(ctx: Ctx) -> None:
+def _prepare_palette_image(img: Any, max_w: int, max_h: int, dither: bool):
+    """Flatten transparency onto white, shrink to fit (max_w, max_h) keeping
+    aspect ratio, and quantize to the panel's 4 colors. Shared by draw_image
+    and draw_image_metric so both scale/quantize identically."""
     from PIL import Image
 
+    # Flatten transparency onto white *before* converting to RGB -- a plain
+    # .convert("RGB") on an RGBA image silently drops the alpha channel and
+    # keeps whatever garbage color is underneath it, which is the classic
+    # "transparent PNG logo shows up with a black box behind it" bug.
+    if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+        img = img.convert("RGBA")
+        bg = Image.new("RGB", img.size, palette.color("white"))
+        bg.paste(img, mask=img.split()[-1])
+        img = bg
+    else:
+        img = img.convert("RGB")
+
+    img = img.copy()
+    img.thumbnail((max(max_w, 1), max(max_h, 1)))
+    # Floyd-Steinberg dithering (the default) approximates far more detail
+    # than 4 flat colors could otherwise show -- great for photos, but can
+    # fuzz up crisp logo edges/text. Pass dither=False for a flat graphic
+    # where sharp edges matter more than tonal range.
+    return palette.quantize_to_palette(img, dither=dither)
+
+
+def draw_image(ctx: Ctx) -> None:
     data = ctx.data or {}
     x, y, w, h = _inset(ctx.box)
 
@@ -523,27 +644,7 @@ def draw_image(ctx: Ctx) -> None:
         return
 
     try:
-        # Flatten transparency onto white *before* converting to RGB --
-        # a plain .convert("RGB") on an RGBA image silently drops the
-        # alpha channel and keeps whatever garbage color is underneath it,
-        # which is the classic "transparent PNG logo shows up with a black
-        # box behind it" bug.
-        if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
-            img = img.convert("RGBA")
-            bg = Image.new("RGB", img.size, palette.color("white"))
-            bg.paste(img, mask=img.split()[-1])
-            img = bg
-        else:
-            img = img.convert("RGB")
-
-        img = img.copy()
-        img.thumbnail((w, h))
-        # Floyd-Steinberg dithering (the default) approximates far more
-        # detail than 4 flat colors could otherwise show -- great for
-        # photos, but can fuzz up crisp logo edges/text. Pass
-        # {"dither": false} in the widget data to turn it off for a flat
-        # graphic where sharp edges matter more than tonal range.
-        img = palette.quantize_to_palette(img, dither=bool(data.get("dither", True)))
+        img = _prepare_palette_image(img, w, h, dither=bool(data.get("dither", True)))
     except Exception:
         _placeholder(ctx, "Bad image data")
         return
@@ -551,6 +652,55 @@ def draw_image(ctx: Ctx) -> None:
     paste_x = x + (w - img.width) // 2
     paste_y = y + (h - img.height) // 2
     ctx.draw._image.paste(img, (paste_x, paste_y))  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# image_metric: a static icon (from assets/, set once in layout.yaml) with a
+# live value/unit reading drawn directly underneath it, in the same box --
+# no separate image + metric widgets/rows needed, no double padding gap
+# between them. Good for something like a periodic-table tile with a live
+# sensor reading "attached" right under it.
+#
+#   layout.yaml (style -- the icon, set once, never pushed):
+#     asset: "radon.jpg"
+#     dither: false          # optional, default true
+#
+#   pushed data (from a publisher):
+#     {"value": 61, "unit": " Bq/m³", "color": "black"}
+# ---------------------------------------------------------------------------
+def draw_image_metric(ctx: Ctx) -> None:
+    x, y, w, h = _inset(ctx.box)
+    data = ctx.data or {}
+
+    icon_h = int(h * 0.68)
+    icon_bottom = y  # falls back to the top of the box if there's no icon
+    asset_name = ctx.style.get("asset")
+    if asset_name:
+        try:
+            img = _load_image_from_data({"asset": asset_name})
+            img = _prepare_palette_image(img, w, icon_h, dither=bool(ctx.style.get("dither", True)))
+        except Exception:
+            img = None
+        if img is not None:
+            paste_x = x + (w - img.width) // 2
+            ctx.draw._image.paste(img, (paste_x, y))  # type: ignore[attr-defined]
+            icon_bottom = y + img.height
+
+    value = str(data.get("value", "--"))
+    unit = str(data.get("unit", ""))
+    color = data.get("color", "black")
+    value_text = f"{value}{unit}"
+
+    avail_top = icon_bottom
+    avail_h = max((y + h) - avail_top, 16)
+    font = _fit_font(ctx.draw, value_text, w, avail_h)
+    ctx.draw.text(
+        (x + w / 2, avail_top + avail_h / 2),
+        value_text,
+        font=font,
+        fill=palette.color(color),
+        anchor="mm",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -752,7 +902,9 @@ WIDGET_REGISTRY: dict[str, Callable[[Ctx], None]] = {
     "alert_banner": draw_alert_banner,
     "progress": draw_progress,
     "image": draw_image,
+    "image_metric": draw_image_metric,
     "bar_chart": draw_bar_chart,
     "pie_chart": draw_pie_chart,
     "panel": draw_panel,
+    "table": draw_table,
 }

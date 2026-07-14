@@ -21,15 +21,15 @@ widgets:
     h: 1
     title: "Home Dashboard"
 
-  # Room sensors -- the main content. Full width, 2 rows tall: enough
-  # room for the 4-room table (+ header row) to stay comfortably readable
-  # from a few feet away without crowding out everything else.
+  # Room sensors -- left half of the screen, 2 rows tall. Half-width
+  # (instead of full) to leave the right half (x6-12, y1-5) free for
+  # another panel later. Aligned with the UPS panel below it -- same x/w.
   # See publisher_ha_rooms/publish_rooms.py for what pushes this.
   - id: rooms_panel
     type: panel
     x: 0
     y: 1
-    w: 12
+    w: 6
     h: 2
     title: "Rooms"
 
@@ -37,15 +37,16 @@ widgets:
     type: table
     x: 0
     y: 1
-    w: 12
+    w: 6
     h: 2
 
-  # UPS status. See publisher_ups/publish_ups.py.
+  # UPS status -- same x/w as the rooms panel above (left half, aligned).
+  # See publisher_ups/publish_ups.py.
   - id: ups_panel
     type: panel
     x: 0
     y: 3
-    w: 12
+    w: 6
     h: 2
     title: "UPS"
 
@@ -53,15 +54,15 @@ widgets:
     type: progress
     x: 0
     y: 3
-    w: 6
+    w: 3
     h: 2
     title: "UPS Battery"
 
   - id: ups_load
     type: metric
-    x: 6
+    x: 3
     y: 3
-    w: 6
+    w: 3
     h: 2
     title: "UPS Load"
 
@@ -71,3 +72,27 @@ widgets:
     y: 5
     w: 12
     h: 1
+
+  # Radon reading -- narrow vertical panel in the empty right half (x6-12,
+  # y1-5), spanning grid (6,1) to (7,3). Icon with the live Bq/m3 reading
+  # drawn directly beneath it in the same box (type: image_metric) -- see
+  # publisher_rooms/publish_rooms.py (radon_entity in rooms.yaml) for what
+  # pushes the reading. The icon itself is a static asset
+  # (shared/dashboard_render/assets/radon.jpg), set once here in layout.yaml
+  # rather than pushed, since it never changes.
+  - id: radon_panel
+    type: panel
+    x: 6
+    y: 1
+    w: 1
+    h: 2
+    title: "Radon"
+
+  - id: radon_metric
+    type: image_metric
+    x: 6
+    y: 1
+    w: 1
+    h: 2
+    asset: "radon.jpg"
+    dither: false

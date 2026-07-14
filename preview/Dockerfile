@@ -13,8 +13,13 @@ WORKDIR /app
 # auto-sized widget number at a tiny fixed size no matter how large the
 # widget's box is. pi_client/install.sh installs this same package on the
 # physical Pi; this is the equivalent for the container.
+#
+# It also has no tzdata package, so the TZ env var (set in
+# docker-compose.yml/.env) can't actually resolve a named zone like
+# "America/Montreal" without this -- datetime.now() would silently keep
+# using UTC regardless of what TZ is set to.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends fonts-dejavu-core \
+    && apt-get install -y --no-install-recommends fonts-dejavu-core tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 COPY preview/requirements.txt preview/requirements.txt

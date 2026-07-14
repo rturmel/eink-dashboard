@@ -69,6 +69,15 @@ _layout: Optional[dict[str, Any]] = None
 _state: dict[str, Any] = {}
 _frame_bytes: Optional[bytes] = None
 _frame_version = 0
+# Timestamp of the last time the broker actually told us something changed
+# (a "full_state" or "update" WebSocket message) -- distinct from "time" in
+# the header, which is just wall-clock render time. Here they'll usually be
+# seconds apart since preview re-renders immediately with no debouncing --
+# the gap matters far more on pi_client, where "time" reflects the last
+# *physical* refresh (which can lag behind by up to min_refresh_interval_
+# seconds/force_refresh_seconds) while this reflects when the data itself
+# actually last changed.
+_last_update_ts: Optional[datetime] = None
 
 
 def _ws_url() -> str:
@@ -86,6 +95,10 @@ def _render_frame() -> None:
     state = dict(_state)
     header = dict(state.get("header", {}))
     header.setdefault("time", datetime.now().strftime("%-I:%M %p"))
+    if _last_update_ts is not None:
+        header.setdefault(
+            "subtitle", f"Data updated {_last_update_ts.strftime('%b %-d, %-I:%M %p')}"
+        )
     state["header"] = header
 
     image = render_dashboard(_layout, state)
@@ -96,7 +109,7 @@ def _render_frame() -> None:
 
 
 async def _broker_listener() -> None:
-    global _layout, _state
+    global _layout, _state, _last_update_ts
     backoff = 2
     while True:
         try:
@@ -115,6 +128,7 @@ async def _broker_listener() -> None:
                         _state = msg["state"]
                     else:
                         continue
+                    _last_update_ts = datetime.now()
                     _render_frame()
         except Exception as exc:  # noqa: BLE001
             log.warning("broker connection issue (%s); retrying in %ss", exc, backoff)

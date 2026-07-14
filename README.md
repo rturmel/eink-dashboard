@@ -42,6 +42,9 @@ Regenerate them anytime with `python3 docs/mockups/generate_mockups.py`.
   `apcaccess status` and pushes battery/load/on-battery-alert to the
   broker. Any number of publishers like this can coexist — they just need
   to write to different widget ids.
+- **publisher_rooms/** — another one-shot cron script; fetches Bluetooth
+  thermometer/hygrometer readings (temp/humidity/battery per room) from
+  Home Assistant's REST API and pushes a table to the broker.
 - **pi_client/** — runs on the Raspberry Pi. Connects to the broker,
   renders the dashboard, and pushes it to the physical panel — rate
   limited to protect the hardware (see "About this display" below).
@@ -51,9 +54,11 @@ Regenerate them anytime with `python3 docs/mockups/generate_mockups.py`.
   you can see what the panel will show without waiting on it.
 - **shared/dashboard_render/** — the actual drawing code (Pillow-based),
   used identically by pi_client and preview so what you see in the
-  browser matches what shows up on the panel. `layout.yaml` here defines
-  the widget grid; edit it to change what's on screen without touching
-  any Python.
+  browser matches what shows up on the panel. `layout.example.yaml` here
+  is a demo/reference file (what "Load demo data" targets); your real
+  dashboard belongs in its own `layout.yaml`, with the broker pointed at
+  it — see `docs/SETUP.md`. Edit whichever one to change what's on screen
+  without touching any Python.
 
 ## About this display
 
@@ -111,6 +116,7 @@ From here:
 broker/                  central hub service (FastAPI)
 publisher_ha/             Home Assistant -> broker bridge
 publisher_ups/             apcupsd -> broker cron script
+publisher_rooms/           HA REST API room sensors -> broker cron script
 pi_client/                 runs on the Pi, renders + pushes to hardware
 preview/                   local web preview
 shared/dashboard_render/   rendering + widget library used by both clients

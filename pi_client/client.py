@@ -75,6 +75,12 @@ class DashboardClient:
         self._dirty = False
         self._last_refresh = 0.0
         self._pending_task: Optional[asyncio.Task] = None
+        # When the broker last told us data actually changed -- distinct
+        # from "time" in the header (which is the last *physical* refresh,
+        # set below). Debouncing means those two can be far apart: this
+        # tells you how fresh the underlying data is even when the panel
+        # itself hasn't redrawn in a while.
+        self._last_data_update: Optional[datetime] = None
 
     @property
     def ws_url(self) -> str:
@@ -123,6 +129,7 @@ class DashboardClient:
             )
         else:
             return
+        self._last_data_update = datetime.now()
         self._schedule_refresh()
 
     def _schedule_refresh(self) -> None:
@@ -149,6 +156,11 @@ class DashboardClient:
         state = dict(self.state)
         header = dict(state.get("header", {}))
         header.setdefault("time", datetime.now().strftime("%-I:%M %p"))
+        if self._last_data_update is not None:
+            header.setdefault(
+                "subtitle",
+                f"Data updated {self._last_data_update.strftime('%b %-d, %-I:%M %p')}",
+            )
         state["header"] = header
 
         loop = asyncio.get_running_loop()

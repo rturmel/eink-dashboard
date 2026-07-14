@@ -226,6 +226,33 @@ yellow, the next 3 get dithered blends (orange/gray/pink), covering up to
 (any name from the colors section above) to control this directly — e.g.
 group small categories into a gray "Other" slice.
 
+## `table`
+
+A generic multi-column grid -- a header row (optional) plus N data rows,
+each with the same number of cells. It has no idea what the columns mean
+-- format each cell as a plain string before pushing it (`"22.1°C"`,
+`"87%"`) -- same spirit as `text_list` not knowing what its label/value
+pairs mean, just extended to more than 2 columns.
+
+```json
+{
+  "columns": ["Room", "Temp", "Humidity", "Batt"],
+  "rows": [
+    ["Etage", "22.1°C", "45%", "87%"],
+    {"cells": ["Gazebo", "15.0°C", "70%", "12%"], "color": "red"}
+  ]
+}
+```
+
+The first column is left-aligned (meant for a name); every other column
+is right-aligned (meant for numbers). A row can be a plain list of cell
+strings, or `{"cells": [...], "color": "..."}` to tint that whole row
+(solid or dithered blend) -- handy for flagging one row out of several,
+e.g. a low battery.
+
+`col_widths` (optional, e.g. `[2, 1, 1, 1]`) sets relative column
+widths; omit it for equal-width columns.
+
 ## `panel` (decorative grouping box)
 
 A border (+ optional label) drawn around a cluster of other widgets, to

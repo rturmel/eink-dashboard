@@ -31,3 +31,8 @@ rooms:
 # is at or below this (matches the same "flag it" convention the
 # progress/UPS widgets already use under 20%).
 low_battery_threshold: 20
+
+# Optional -- if set, also pushes this entity's state to the "radon_metric"
+# widget (layout.yaml) on every run. Leave unset/remove this line if you
+# don't have a radon sensor.
+radon_entity: "sensor.view_radon_radon"

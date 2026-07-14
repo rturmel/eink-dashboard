@@ -10,6 +10,12 @@ to in real time; this just asks HA for the latest state of each sensor
 and pushes a formatted table to the broker's "rooms_table" widget (see
 layout.yaml -- type: table).
 
+Also optionally pushes a single extra entity (e.g. a radon sensor) to the
+"radon_metric" widget in the same run -- see `radon_entity` in
+rooms.example.yaml. No separate publisher/cron job needed for it; it just
+rides along with the existing rooms fetch since it's the same pattern
+(one REST call, no subscription needed).
+
 Uses Home Assistant's REST API (GET /api/states/<entity_id>) rather than
 the WebSocket API publisher_ha uses, since a one-shot script doesn't need
 a persistent connection. Needs a long-lived access token: in Home
@@ -57,7 +63,7 @@ logging.basicConfig(
 log = logging.getLogger("publish_rooms")
 
 
-def load_rooms_config(path: Path) -> tuple[list[dict[str, str]], float]:
+def load_rooms_config(path: Path) -> tuple[list[dict[str, str]], float, Optional[str]]:
     if not path.exists():
         raise RuntimeError(
             f"rooms config not found: {path} "
@@ -69,7 +75,8 @@ def load_rooms_config(path: Path) -> tuple[list[dict[str, str]], float]:
     if not rooms:
         raise RuntimeError(f"no rooms defined in {path}")
     threshold = float(cfg.get("low_battery_threshold", 20))
-    return rooms, threshold
+    radon_entity = cfg.get("radon_entity") or None
+    return rooms, threshold, radon_entity
 
 
 def fetch_entity_state(ha_url: str, ha_token: str, entity_id: str) -> Optional[str]:
@@ -108,7 +115,11 @@ def _fmt_number(raw: Optional[str], suffix: str, decimals: int = 0) -> str:
 
 
 def build_payload(
-    ha_url: str, ha_token: str, rooms: list[dict[str, str]], low_battery_threshold: float
+    ha_url: str,
+    ha_token: str,
+    rooms: list[dict[str, str]],
+    low_battery_threshold: float,
+    radon_entity: Optional[str] = None,
 ) -> dict[str, dict]:
     rows = []
     for room in rooms:
@@ -134,12 +145,26 @@ def build_payload(
         else:
             rows.append(cells)
 
-    return {
+    payload: dict[str, dict] = {
         "rooms_table": {
             "columns": ["Room", "Temp", "Humidity", "Batt"],
             "rows": rows,
         }
     }
+
+    if radon_entity:
+        radon_raw = fetch_entity_state(ha_url, ha_token, radon_entity)
+        try:
+            radon_value: Any = round(float(radon_raw)) if radon_raw is not None else None
+        except ValueError:
+            radon_value = None
+        payload["radon_metric"] = (
+            {"value": radon_value, "unit": " Bq/m³"}
+            if radon_value is not None
+            else {"value": "--", "unit": ""}
+        )
+
+    return payload
 
 
 def push_to_broker(broker_url: str, token: str, payload: dict[str, dict]) -> None:
@@ -182,8 +207,8 @@ def main() -> int:
         return 1
 
     try:
-        rooms, low_battery_threshold = load_rooms_config(Path(args.rooms_config))
-        payload = build_payload(ha_url, ha_token, rooms, low_battery_threshold)
+        rooms, low_battery_threshold, radon_entity = load_rooms_config(Path(args.rooms_config))
+        payload = build_payload(ha_url, ha_token, rooms, low_battery_threshold, radon_entity)
     except RuntimeError as exc:
         log.error("%s", exc)
         return 1
@@ -198,7 +223,8 @@ def main() -> int:
         log.error("%s", exc)
         return 1
 
-    log.info("pushed %d room(s) to broker", len(payload["rooms_table"]["rows"]))
+    extra = " + radon" if "radon_metric" in payload else ""
+    log.info("pushed %d room(s)%s to broker", len(payload["rooms_table"]["rows"]), extra)
     return 0
 
 

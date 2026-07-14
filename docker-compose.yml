@@ -28,6 +28,11 @@ services:
       - "${BROKER_PORT:-9090}:8080"
     environment:
       DASHBOARD_TOKEN: ${DASHBOARD_TOKEN:?Set DASHBOARD_TOKEN in .env -- copy .env.example to .env and fill it in first}
+      # python:3.12-slim defaults to UTC -- set this to your real zone in
+      # .env (e.g. TZ=America/Montreal) so timestamps in the header match
+      # your local time instead of drifting hours off. Broker itself
+      # doesn't render anything, but this keeps both services consistent.
+      TZ: ${TZ:-UTC}
     volumes:
       # Persists state.json across container recreation/rebuilds.
       - eink-broker-data:/app/broker/data
@@ -54,6 +59,10 @@ services:
       # other services/volumes if you're running multiple versions of
       # this stack side by side.
       BROKER_URL: http://eink-broker:8080
+      # This is the one that actually matters -- preview renders the
+      # header's clock/"Data updated" timestamp with datetime.now(), which
+      # uses this container's timezone. Set TZ in .env to your real zone.
+      TZ: ${TZ:-UTC}
     depends_on:
       eink-broker:
         condition: service_healthy
