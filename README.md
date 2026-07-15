@@ -6,6 +6,12 @@ pulled from Home Assistant (or anything else). The Pi knows nothing about
 Home Assistant; it just renders whatever a small central service tells it
 to, which is what lets it be reprovisioned anywhere with Wi-Fi.
 
+![Home Dashboard](docs/mockups/dashboard.jpg)
+
+*A real render of the live dashboard (not a mockup) — room sensors, UPS
+status, radon, weather, and Zabbix server stats, all pushed by their own
+independent publishers.*
+
 **Sample mockups** (rendered with the real pipeline, not hand-drawn) are in
 [`docs/mockups/`](docs/mockups/) — a realistic full dashboard, a gallery of
 every widget type (metrics, weather, bar/pie charts, a logo image, alerts,
@@ -45,6 +51,14 @@ Regenerate them anytime with `python3 docs/mockups/generate_mockups.py`.
 - **publisher_rooms/** — another one-shot cron script; fetches Bluetooth
   thermometer/hygrometer readings (temp/humidity/battery per room) from
   Home Assistant's REST API and pushes a table to the broker.
+- **publisher_zabbix/** — a one-shot cron script, scheduled independently
+  of the others, that logs into a Zabbix server's JSON-RPC API and pushes
+  RAID status/sync, CPU utilization, and disk usage for one host to the
+  broker.
+- **publisher_weather/** — a one-shot cron script, also scheduled on its
+  own, that pulls current conditions/UV/air quality/short-term forecast
+  for a configurable city from Open-Meteo (free, no API key needed) and
+  pushes them to the broker.
 - **pi_client/** — runs on the Raspberry Pi. Connects to the broker,
   renders the dashboard, and pushes it to the physical panel — rate
   limited to protect the hardware (see "About this display" below).
@@ -117,6 +131,8 @@ broker/                  central hub service (FastAPI)
 publisher_ha/             Home Assistant -> broker bridge
 publisher_ups/             apcupsd -> broker cron script
 publisher_rooms/           HA REST API room sensors -> broker cron script
+publisher_zabbix/           Zabbix JSON-RPC API -> broker cron script (own schedule)
+publisher_weather/          Open-Meteo (no API key) -> broker cron script (own schedule)
 pi_client/                 runs on the Pi, renders + pushes to hardware
 preview/                   local web preview
 shared/dashboard_render/   rendering + widget library used by both clients
