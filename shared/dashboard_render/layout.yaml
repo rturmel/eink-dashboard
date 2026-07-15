@@ -40,14 +40,14 @@ widgets:
     w: 6
     h: 2
 
-  # UPS status -- same x/w as the rooms panel above (left half, aligned).
-  # See publisher_ups/publish_ups.py.
+  # UPS status -- same x/w as the rooms panel above (left half, aligned),
+  # 1 row tall. See publisher_ups/publish_ups.py.
   - id: ups_panel
     type: panel
     x: 0
     y: 3
     w: 6
-    h: 2
+    h: 1
     title: "UPS"
 
   - id: ups_battery
@@ -55,7 +55,7 @@ widgets:
     x: 0
     y: 3
     w: 3
-    h: 2
+    h: 1
     title: "UPS Battery"
 
   - id: ups_load
@@ -63,7 +63,7 @@ widgets:
     x: 3
     y: 3
     w: 3
-    h: 2
+    h: 1
     title: "UPS Load"
 
   - id: ups_alert
@@ -96,3 +96,91 @@ widgets:
     h: 2
     asset: "radon.jpg"
     dither: false
+
+  # Weather -- configurable city (default Laval, QC), full content height
+  # (y1-5), between the radon column and the Serval panel. Stacked
+  # vertically: current conditions + today's hi/lo (row 1-2), a
+  # Humidity/UV/Air Quality stats row (row 3), then a short-term forecast
+  # strip (row 4). See publisher_weather/publish_weather.py -- it's
+  # scheduled independently of the other publishers (own cron line/log
+  # file) and needs no API key (Open-Meteo is free/keyless).
+  - id: weather_panel
+    type: panel
+    x: 7
+    y: 1
+    w: 2
+    h: 4
+    title: "Weather"
+
+  - id: weather_current
+    type: weather
+    x: 7
+    y: 1
+    w: 2
+    h: 2
+
+  - id: weather_stats
+    type: text_list
+    x: 7
+    y: 3
+    w: 2
+    h: 1
+
+  - id: weather_forecast
+    type: forecast_strip
+    x: 7
+    y: 4
+    w: 2
+    h: 1
+
+  # Serval (server) monitoring -- one panel, full content height (y1-5),
+  # pushed to the right edge (x9-12, 3 cols) -- x7-9 stays free for
+  # something else later. Stacked vertically inside: CPU (row 1), RAID
+  # status + sync (row 2), then /raid-data usage as a centered pie with a
+  # centered title and the legend below it (rows 3-4 combined) rather than
+  # a separate panel, since it's really just another Serval stat.
+  # raid_sync is a plain number (metric), not a bar -- RAID sync is either
+  # "done" (100) or "in progress at N%", a bar doesn't add anything a
+  # number doesn't already say. See publisher_zabbix/publish_zabbix.py for
+  # what pushes these widgets; it's scheduled independently of the other
+  # publishers (own cron line/log file).
+  - id: system_panel
+    type: panel
+    x: 9
+    y: 1
+    w: 3
+    h: 4
+    title: "Serval"
+
+  - id: cpu_util
+    type: progress
+    x: 9
+    y: 1
+    w: 3
+    h: 1
+    title: "CPU Util"
+
+  - id: raid_status
+    type: metric
+    x: 9
+    y: 2
+    w: 2
+    h: 1
+    title: "RAID"
+
+  - id: raid_sync
+    type: metric
+    x: 11
+    y: 2
+    w: 1
+    h: 1
+    title: "Sync"
+
+  - id: disk_pie
+    type: pie_chart
+    x: 9
+    y: 3
+    w: 3
+    h: 2
+    legend: "below"
+    title: "/raid-data"

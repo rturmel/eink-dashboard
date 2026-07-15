@@ -326,7 +326,191 @@ convention as the UPS/progress widgets.
     h: 2
 ```
 
-## 5. Pi client (the physical display)
+## 5. Zabbix publisher (cron, scheduled independently)
+
+If you run Zabbix, `publisher_zabbix/publish_zabbix.py` logs into its
+JSON-RPC API, asks for the latest value of a handful of items on one host,
+and pushes them to the broker. Like the UPS publisher, this is a
+**one-shot script meant for cron** -- Zabbix already polls the host, this
+just asks for the latest snapshot -- but it's meant to run on its **own**
+crontab line and log file, independent of any other publisher, since
+there's no reason a Zabbix outage/slowdown should affect how often room
+sensors or UPS status get pushed (or vice versa). Pure standard library,
+no venv or pip install needed.
+
+Create a **read-only** Zabbix user for this (Administration → Users) --
+this script only ever calls `.get` methods, never changes anything, so it
+shouldn't hold write access. Then:
+
+```bash
+cd publisher_zabbix
+ZABBIX_URL=http://your-zabbix-host:8080/api_jsonrpc.php \
+  ZABBIX_USER=your-readonly-user ZABBIX_PASSWORD=your-password \
+  ZABBIX_HOST=serval \
+  python3 publish_zabbix.py --dry-run   # logs in, fetches, prints the payload, doesn't push
+```
+
+`ZABBIX_HOST` is the **technical** host name in Zabbix (Data collection →
+Hosts), not necessarily its display name. The script asks for four item
+keys on that host: `raid.status`, `raid.sync`, `system.cpu.util`,
+`vfs.fs.dependent.size[/raid-data,pused]` -- edit `ITEM_KEYS` near the top
+of the script if you want different/more items later.
+
+Once the dry run looks right, wire it into cron -- **its own line**, not
+appended to an existing one:
+
+```bash
+crontab -e
+```
+
+```cron
+*/5 * * * * ZABBIX_URL=http://your-zabbix-host:8080/api_jsonrpc.php \
+    ZABBIX_USER=your-readonly-user ZABBIX_PASSWORD=your-password ZABBIX_HOST=serval \
+    BROKER_URL=http://localhost:9090 DASHBOARD_TOKEN=your-broker-token \
+    /usr/bin/python3 /path/to/eink_dashboard/publisher_zabbix/publish_zabbix.py \
+    >> /var/log/zabbix_publish.log 2>&1
+```
+
+It pushes four widgets -- `raid_status` (metric, red if the text isn't a
+recognized "OK" state -- see `OK_RAID_STATUSES` in the script, adjust it
+once you see what your actual item reports), `raid_sync` (metric, plain
+number, red if under 100% -- no bar, since RAID sync is either "done" or
+"in progress at N%" and a bar doesn't add anything the number doesn't
+already say), `cpu_util` (progress, red at 90%+), `disk_pie` (pie_chart,
+Used/Free split of `/raid-data`, red "Used" slice at 90%+) -- all stacked
+inside one panel, so your `layout.yaml` needs matching entries, e.g.:
+
+```yaml
+  # optional -- draws a border + "Serval" label around the four widgets below
+  - id: system_panel
+    type: panel
+    x: 7
+    y: 1
+    w: 5
+    h: 4
+    title: "Serval"
+
+  - id: cpu_util
+    type: progress
+    x: 7
+    y: 1
+    w: 5
+    h: 1
+    title: "CPU Util"
+
+  - id: raid_status
+    type: metric
+    x: 7
+    y: 2
+    w: 3
+    h: 1
+    title: "RAID"
+
+  - id: raid_sync
+    type: metric
+    x: 10
+    y: 2
+    w: 2
+    h: 1
+    title: "Sync"
+
+  - id: disk_pie
+    type: pie_chart
+    x: 7
+    y: 3
+    w: 5
+    h: 2
+    legend: "below"   # centers the pie + wraps the legend underneath it,
+                       # instead of the default side legend -- see
+                       # docs/WIDGETS.md#pie_chart
+    title: "/raid-data"
+```
+
+Adjust `x`/`y`/`w`/`h` to fit wherever's free in your actual layout, and
+set `ZABBIX_WIDGET_PREFIX` (default `""`) if you'd rather use different
+ids -- just keep the layout's `id`s matching whatever the script pushes.
+
+## 6. Weather publisher (Open-Meteo, cron, scheduled independently)
+
+`publisher_weather/publish_weather.py` pushes current conditions, a
+Humidity/UV/Air Quality stats row, and a short-term forecast strip for a
+configurable city (default Laval, Quebec). Like the Zabbix publisher,
+it's a **one-shot script meant for its own cron line/log file** --
+weather doesn't need to update nearly as often as sensors, so every 30
+minutes or so is plenty. Pure standard library, no venv or pip install
+needed.
+
+**No API key or account needed.** It uses [Open-Meteo](https://open-meteo.com),
+which is free and keyless for its geocoding, forecast, and air-quality
+APIs -- nothing to sign up for, nothing else to keep secret in your
+crontab.
+
+```bash
+cd publisher_weather
+WEATHER_CITY="Laval, Quebec, Canada" python3 publish_weather.py --dry-run   # geocodes, fetches, prints the payload, doesn't push
+```
+
+If your city name is ambiguous (several places share it -- "Laval" is
+also a city in France), set `WEATHER_COUNTRY` to a substring to prefer,
+e.g. `WEATHER_COUNTRY=Canada`.
+
+Once the dry run looks right, wire it into cron -- **its own line**:
+
+```bash
+crontab -e
+```
+
+```cron
+*/30 * * * * WEATHER_CITY="Laval, Quebec, Canada" WEATHER_COUNTRY=Canada \
+    BROKER_URL=http://localhost:9090 DASHBOARD_TOKEN=your-broker-token \
+    /usr/bin/python3 /path/to/eink_dashboard/publisher_weather/publish_weather.py \
+    >> /var/log/weather_publish.log 2>&1
+```
+
+It pushes three widgets -- `weather_current` (type: weather -- icon,
+location, current temp, today's hi/lo, humidity), `weather_stats` (type:
+text_list -- Humidity/UV Index/Air Quality, red when UV is 8+ or AQI is
+over 100), `weather_forecast` (type: forecast_strip -- a few days of
+mini icon+hi/lo) -- so your `layout.yaml` needs matching entries, e.g.:
+
+```yaml
+  # optional -- draws a border + "Weather" label around the three widgets below
+  - id: weather_panel
+    type: panel
+    x: 7
+    y: 1
+    w: 2
+    h: 4
+    title: "Weather"
+
+  - id: weather_current
+    type: weather
+    x: 7
+    y: 1
+    w: 2
+    h: 2
+
+  - id: weather_stats
+    type: text_list
+    x: 7
+    y: 3
+    w: 2
+    h: 1
+
+  - id: weather_forecast
+    type: forecast_strip
+    x: 7
+    y: 4
+    w: 2
+    h: 1
+```
+
+Adjust `x`/`y`/`w`/`h` to fit wherever's free in your actual layout, and
+set `WEATHER_WIDGET_PREFIX` (default `""`) if you'd rather use different
+ids. `TEMPERATURE_UNIT` (default `celsius`, or `fahrenheit`) and
+`FORECAST_DAYS` (default `3`) are also configurable via env var.
+
+## 7. Pi client (the physical display)
 
 ### Hardware assembly
 

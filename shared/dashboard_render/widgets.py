@@ -21,7 +21,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from PIL import ImageDraw
 
@@ -168,6 +168,17 @@ def draw_header(ctx: Ctx) -> None:
 
 # ---------------------------------------------------------------------------
 # metric: one big number (temperature, humidity, a sensor reading, etc.)
+#
+# The label's footprint is measured first and subtracted from the box
+# height *before* fitting the value font, rather than using fixed
+# fractions (old behavior: value centered at a fixed 42% down, label at a
+# fixed 14px from the bottom) -- those fixed offsets assumed a roomy ~h2
+# box and silently overlapped value/label text in anything shorter (a 1
+# grid row box), since the value font could still fit-to-size taller than
+# the actual gap above the label. Reserving the label's real height first
+# makes the value font's available space (and therefore its size) shrink
+# to whatever's actually left, so there's no overlap at any box height --
+# it just looks smaller in a smaller box instead of breaking.
 # ---------------------------------------------------------------------------
 def draw_metric(ctx: Ctx) -> None:
     if not ctx.data:
@@ -180,11 +191,17 @@ def draw_metric(ctx: Ctx) -> None:
     unit = str(ctx.data.get("unit", ""))
     accent = ctx.data.get("color", "black")
 
+    label_font = get_font(15, bold=False)
+    label_h = 0.0
+    if label:
+        _, lh = _text_size(ctx.draw, label.upper(), label_font)
+        label_h = lh + 8  # padding above the label text
+
+    value_area_h = max(h - label_h, 16)
     value_text = f"{value}{unit}"
-    value_font = _fit_font(ctx.draw, value_text, w, int(h * 0.62))
-    vw, vh = _text_size(ctx.draw, value_text, value_font)
+    value_font = _fit_font(ctx.draw, value_text, w, int(value_area_h))
     ctx.draw.text(
-        (x + w / 2, y + h * 0.42),
+        (x + w / 2, y + value_area_h / 2),
         value_text,
         font=value_font,
         fill=palette.color(accent),
@@ -192,9 +209,8 @@ def draw_metric(ctx: Ctx) -> None:
     )
 
     if label:
-        label_font = get_font(15, bold=False)
         ctx.draw.text(
-            (x + w / 2, y + h - 14),
+            (x + w / 2, y + h - label_h / 2),
             label.upper(),
             font=label_font,
             fill=palette.color("black"),
@@ -219,7 +235,6 @@ def draw_text_list(ctx: Ctx) -> None:
 
     row_h = max((bottom - y0) / max(len(items), 1), 20)
     label_font = get_font(16, bold=False)
-    value_font = get_font(16, bold=True)
 
     for i, item in enumerate(items):
         row_y = y0 + i * row_h
@@ -230,6 +245,14 @@ def draw_text_list(ctx: Ctx) -> None:
         color = palette.color(item.get("color", "black"))
 
         ctx.draw.text((x, row_y), label, font=label_font, fill=palette.color("black"))
+
+        # Value font shrinks to whatever width is actually left after the
+        # label, rather than a fixed 16px -- a long label + long value
+        # (e.g. "Air Quality" + "70 (Moderate)") in a narrow widget would
+        # otherwise overlap instead of just getting tighter.
+        label_w, _ = _text_size(ctx.draw, label, label_font)
+        max_value_w = max(w - label_w - 8, 20)
+        value_font = _fit_font(ctx.draw, value, max_value_w, 20, bold=True)
         vw, _ = _text_size(ctx.draw, value, value_font)
         ctx.draw.text((x + w - vw, row_y), value, font=value_font, fill=color)
 
@@ -357,27 +380,89 @@ _CONDITION_ALIASES = {
 }
 
 
+def _paste_silhouette(
+    draw: ImageDraw.ImageDraw,
+    add_ellipses: list[list[float]],
+    subtract_ellipses: Optional[list[list[float]]] = None,
+    fill: str = "white",
+    outline: str = "black",
+    outline_w: int = 2,
+) -> None:
+    """Paste the union of `add_ellipses` (minus any `subtract_ellipses`,
+    for carving a crescent moon out of a circle) as one smooth silhouette:
+    filled with `fill`, outlined in `outline`.
+
+    Weather icons like the cloud are built from several overlapping
+    ellipses -- outlining each ellipse individually would draw every seam
+    where they overlap (three overlapping circles, not one cloud). Instead
+    this rasterizes the union into a mask, eroding a copy of it to find
+    just the *outer* boundary (mask minus its erosion = the outline ring),
+    so overlapping component shapes always read as one clean silhouette
+    regardless of how they overlap.
+    """
+    from PIL import Image as _Image
+    from PIL import ImageChops as _ImageChops
+    from PIL import ImageDraw as _ImageDraw
+    from PIL import ImageFilter as _ImageFilter
+
+    all_boxes = add_ellipses + (subtract_ellipses or [])
+    xs = [c for box in all_boxes for c in (box[0], box[2])]
+    ys = [c for box in all_boxes for c in (box[1], box[3])]
+    pad = outline_w + 2
+    x0, y0 = int(min(xs)) - pad, int(min(ys)) - pad
+    x1, y1 = int(max(xs)) + pad, int(max(ys)) + pad
+    w, h = max(x1 - x0, 1), max(y1 - y0, 1)
+
+    mask = _Image.new("L", (w, h), 0)
+    mdraw = _ImageDraw.Draw(mask)
+    for box in add_ellipses:
+        mdraw.ellipse([box[0] - x0, box[1] - y0, box[2] - x0, box[3] - y0], fill=255)
+    for box in subtract_ellipses or []:
+        mdraw.ellipse([box[0] - x0, box[1] - y0, box[2] - x0, box[3] - y0], fill=0)
+
+    eroded = mask.filter(_ImageFilter.MinFilter(2 * outline_w + 1))
+    ring = _ImageChops.subtract(mask, eroded)
+
+    image = draw._image  # type: ignore[attr-defined]
+    fill_layer = _Image.new("RGB", (w, h), palette.color(fill))
+    image.paste(fill_layer, (x0, y0), mask)
+    outline_layer = _Image.new("RGB", (w, h), palette.color(outline))
+    image.paste(outline_layer, (x0, y0), ring)
+
+
 def _icon_sunny(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int) -> None:
-    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=palette.color("yellow"))
     for i in range(8):
         a = i * math.pi / 4
         x1, y1 = cx + math.cos(a) * (r + 6), cy + math.sin(a) * (r + 6)
         x2, y2 = cx + math.cos(a) * (r + 16), cy + math.sin(a) * (r + 16)
         draw.line([(x1, y1), (x2, y2)], fill=palette.color("yellow"), width=4)
+    # Outline drawn after the rays so the sun's disc reads as crisp/solid
+    # rather than the rays visually poking through a soft edge.
+    _paste_silhouette(
+        draw, [[cx - r, cy - r, cx + r, cy + r]], fill="yellow", outline="black", outline_w=2
+    )
 
 
 def _icon_cloud(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int, color="black") -> None:
-    fill = palette.color(color)
-    draw.ellipse([cx - r, cy - r * 0.6, cx + r * 0.5, cy + r * 0.6], fill=fill)
-    draw.ellipse([cx - r * 0.5, cy - r, cx + r * 0.9, cy + r * 0.4], fill=fill)
-    draw.ellipse([cx - r * 1.3, cy - r * 0.3, cx + r * 0.2, cy + r * 0.7], fill=fill)
+    """White-filled, black-outlined puffy cloud -- outline instead of a
+    solid fill so it reads as a cloud pictogram rather than an ink blot,
+    especially at the small sizes forecast_strip uses. `color` is kept as
+    a parameter for backwards compatibility but now controls the outline,
+    not a solid fill."""
+    ellipses = [
+        [cx - r, cy - r * 0.6, cx + r * 0.5, cy + r * 0.6],
+        [cx - r * 0.5, cy - r, cx + r * 0.9, cy + r * 0.4],
+        [cx - r * 1.3, cy - r * 0.3, cx + r * 0.2, cy + r * 0.7],
+    ]
+    outline_w = max(int(r * 0.14), 1)
+    _paste_silhouette(draw, ellipses, fill="white", outline=color, outline_w=outline_w)
 
 
 def _icon_rain(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int) -> None:
     _icon_cloud(draw, cx, cy - 8, r, color="black")
     for dx in (-r * 0.6, 0, r * 0.6):
         x = cx + dx
-        draw.line([(x, cy + r * 0.5), (x - 6, cy + r * 0.9)], fill=palette.color("red"), width=4)
+        draw.line([(x, cy + r * 0.5), (x - 6, cy + r * 0.9)], fill=palette.color("black"), width=4)
 
 
 def _icon_snow(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int) -> None:
@@ -428,44 +513,58 @@ def draw_weather(ctx: Ctx) -> None:
         return
 
     x, y, w, h = _inset(ctx.box)
+
+    # Optional -- a city/location name drawn as a small line above the icon,
+    # pushed as data (not a layout.yaml style option) so it can change at
+    # runtime without touching the layout (e.g. a configurable-city
+    # publisher). Everything below shifts down to make room for it.
+    location = str(ctx.data.get("location", ""))
+    top_offset = 0
+    if location:
+        loc_font = get_font(13, bold=True)
+        ctx.draw.text((x, y), location, font=loc_font, fill=palette.color("black"))
+        top_offset = 18
+
     condition = _CONDITION_ALIASES.get(
         str(ctx.data.get("condition", "")).lower(), "cloudy"
     )
     icon_fn = _ICON_FN.get(condition, _icon_cloud)
 
-    icon_r = int(min(w, h) * 0.22)
+    icon_r = int(min(w, h - top_offset) * 0.22)
     icon_cx = x + icon_r + 10
-    icon_cy = y + icon_r + 10
+    icon_cy = y + top_offset + icon_r + 10
     icon_fn(ctx.draw, icon_cx, icon_cy, icon_r)
 
     temp = str(ctx.data.get("temp", "--"))
     unit = str(ctx.data.get("temp_unit", ""))
-    temp_font = _fit_font(ctx.draw, f"{temp}{unit}", int(w * 0.55), int(h * 0.5))
+    temp_font = _fit_font(ctx.draw, f"{temp}{unit}", int(w * 0.55), int((h - top_offset) * 0.5))
     ctx.draw.text(
-        (x + w - 4, y + 6),
+        (x + w - 4, y + top_offset + 6),
         f"{temp}{unit}",
         font=temp_font,
         fill=palette.color("black"),
         anchor="ra",
     )
 
-    detail_bits = []
+    # Two separate lines (rather than one joined string) so a narrow box
+    # (e.g. a 2-grid-column panel) shrinks the font to fit instead of the
+    # text running off the left edge -- each line gets its own _fit_font
+    # pass against the actual box width.
+    detail_lines = []
     if ctx.data.get("high") is not None or ctx.data.get("low") is not None:
         hi = ctx.data.get("high", "--")
         lo = ctx.data.get("low", "--")
-        detail_bits.append(f"H:{hi}{unit} L:{lo}{unit}")
+        detail_lines.append(f"H:{hi}{unit} L:{lo}{unit}")
     if ctx.data.get("humidity") is not None:
-        detail_bits.append(f"{ctx.data['humidity']}% humidity")
-    detail = "  ".join(detail_bits)
+        detail_lines.append(f"{ctx.data['humidity']}% humidity")
 
-    label_font = get_font(15, bold=False)
-    ctx.draw.text(
-        (x + w - 4, y + h - 20),
-        detail,
-        font=label_font,
-        fill=palette.color("black"),
-        anchor="ra",
-    )
+    line_y = y + h - 18 * len(detail_lines)
+    for line in detail_lines:
+        line_font = _fit_font(ctx.draw, line, w, 16, bold=False)
+        ctx.draw.text(
+            (x + w - 4, line_y), line, font=line_font, fill=palette.color("black"), anchor="ra"
+        )
+        line_y += 18
     ctx.draw.text(
         (icon_cx, icon_cy + icon_r + 14),
         condition.replace("_", " ").title(),
@@ -473,6 +572,45 @@ def draw_weather(ctx: Ctx) -> None:
         fill=palette.color("black"),
         anchor="ma",
     )
+
+
+# ---------------------------------------------------------------------------
+# forecast_strip: a row of compact icon + hi/lo mini-forecasts (tomorrow,
+# the day after, ...) -- the short-range companion to `weather` above,
+# meant to sit in a single short row below it rather than needing its own
+# full-size widget per day.
+# ---------------------------------------------------------------------------
+def draw_forecast_strip(ctx: Ctx) -> None:
+    data = ctx.data or {}
+    days = data.get("days", [])
+    if not days:
+        _placeholder(ctx, "No forecast")
+        return
+
+    x, y, w, h = _inset(ctx.box)
+    unit = str(data.get("temp_unit", ""))
+    n = len(days)
+    col_w = w / n
+    icon_r = max(int(min(col_w, h) * 0.16), 7)
+    label_font = get_font(12, bold=True)
+    temp_font = get_font(12, bold=False)
+
+    for i, day in enumerate(days):
+        cx = x + col_w * i + col_w / 2
+        condition = _CONDITION_ALIASES.get(str(day.get("condition", "")).lower(), "cloudy")
+        icon_fn = _ICON_FN.get(condition, _icon_cloud)
+        icon_cy = y + icon_r + 2
+        icon_fn(ctx.draw, cx, icon_cy, icon_r)
+
+        label = str(day.get("label", ""))
+        label_y = icon_cy + icon_r + 6
+        ctx.draw.text((cx, label_y), label, font=label_font, fill=palette.color("black"), anchor="ma")
+
+        hi, lo = day.get("high"), day.get("low")
+        temp_text = f"{hi}{unit}/{lo}{unit}" if hi is not None and lo is not None else "--"
+        ctx.draw.text(
+            (cx, label_y + 15), temp_text, font=temp_font, fill=palette.color("black"), anchor="ma"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -534,7 +672,19 @@ def draw_alert_banner(ctx: Ctx) -> None:
 
 # ---------------------------------------------------------------------------
 # progress: horizontal bar (e.g. vacuum battery, print job %)
+#
+# Bar thickness is capped at PROGRESS_MAX_BAR_H regardless of how tall the
+# widget's box is -- letting it stretch to fill the box (the old behavior)
+# made the fill look like a giant slab in anything taller than a couple of
+# grid rows. A slim, consistently-proportioned bar reads as "a progress
+# bar" at any box height; a bar that's 90px thick just reads as a filled
+# rectangle. Any extra box height below the bar/value-label is left blank
+# on purpose (e.g. a widget style you set roomier for a title/label above)
+# rather than stretched into the bar.
 # ---------------------------------------------------------------------------
+PROGRESS_MAX_BAR_H = 28
+
+
 def draw_progress(ctx: Ctx) -> None:
     data = ctx.data or {}
     x, y, w, h = _inset(ctx.box)
@@ -546,7 +696,7 @@ def draw_progress(ctx: Ctx) -> None:
     ctx.draw.text((x, y), str(label), font=label_font, fill=palette.color("black"))
 
     bar_y = y + 24
-    bar_h = max(h - 24 - 18, 10)
+    bar_h = min(max(h - 24 - 18, 10), PROGRESS_MAX_BAR_H)
     ctx.draw.rectangle(
         [x, bar_y, x + w, bar_y + bar_h], outline=palette.color("black"), width=2
     )
@@ -792,6 +942,15 @@ def _fill_pieslice(ctx: Ctx, bbox: list[float], start_angle: float, sweep: float
 
 
 def draw_pie_chart(ctx: Ctx) -> None:
+    """
+    {"title": "Energy Split", "segments": [{"label": "HVAC", "value": 45}, ...]}
+
+    Style (layout.yaml, not pushed data): `legend: "side"` (default) puts
+    the legend to the right of the pie, sized to fill the box. `legend:
+    "below"` instead centers the pie horizontally and lists the legend as
+    centered, wrapped rows underneath it -- better for a wide/short box
+    where a side legend would leave the pie small and off-center.
+    """
     data = ctx.data or {}
     segments = data.get("segments", [])
     total = sum(float(s.get("value", 0) or 0) for s in segments)
@@ -800,55 +959,124 @@ def draw_pie_chart(ctx: Ctx) -> None:
         return
 
     title = data.get("title") or ctx.style.get("title", "")
-    y0 = _title_bar(ctx, title) if title else _inset(ctx.box)[1]
-    x, _, w, _ = _inset(ctx.box)
+    legend_below = str(ctx.style.get("legend", "side")).lower() == "below"
+    x, inset_y, w, _ = _inset(ctx.box)
     _, top, _, h = ctx.box
     bottom = top + h - PADDING
-    plot_h = bottom - y0
 
-    diameter = max(int(min(plot_h, w * 0.5)), 10)
-    cx = x + diameter / 2
-    cy = y0 + plot_h / 2
-    bbox = [cx - diameter / 2, cy - diameter / 2, cx + diameter / 2, cy + diameter / 2]
+    if title and legend_below:
+        # Centered, to sit visually above the now-centered pie+legend below
+        # it, instead of _title_bar's normal left-aligned fieldset style.
+        title_font = get_font(14, bold=True)
+        ctx.draw.text(
+            (x + w / 2, inset_y), title.upper(), font=title_font, fill=palette.color("black"), anchor="ma"
+        )
+        y0 = inset_y + 22
+    elif title:
+        y0 = _title_bar(ctx, title)
+    else:
+        y0 = inset_y
 
+    # Figure out each slice's angle span + color, and each legend entry's
+    # text, without drawing anything yet -- legend="below" needs to know
+    # the legend's height (which depends on how many rows it wraps into)
+    # *before* the pie's diameter can be sized, so drawing has to wait.
     default_cycle = _CHART_COLOR_CYCLE + ["orange", "gray", "pink"]
-    start_angle = -90.0
-    legend_entries = []
-    slice_angles = []  # (start, sweep, color_name) for the outline pass below
+    angle = -90.0
+    slice_defs: list[tuple[float, float, str]] = []  # (start, sweep, color_name)
+    legend_entries: list[tuple[str, float, str]] = []  # (label, frac, color_name)
     for i, seg in enumerate(segments):
         value = float(seg.get("value", 0) or 0)
         frac = value / total
         sweep = max(frac * 360.0, 0.0)
         color_name = seg.get("color") or default_cycle[i % len(default_cycle)]
         if sweep > 0:
-            _fill_pieslice(ctx, bbox, start_angle, sweep, color_name)
-            slice_angles.append((start_angle, sweep))
+            slice_defs.append((angle, sweep, color_name))
         legend_entries.append((str(seg.get("label", "")), frac, color_name))
-        start_angle += sweep
+        angle += sweep
 
+    swatch = 14
+    legend_font = get_font(13, bold=False)
+
+    if legend_below and legend_entries:
+        chip_gap = 24
+        # (text, color_name, chip_width, chip_height) per entry
+        chips = []
+        for label, frac, color_name in legend_entries:
+            text = f"{label} ({frac * 100:.0f}%)"
+            tw, th = _text_size(ctx.draw, text, legend_font)
+            chips.append((text, color_name, swatch + 6 + tw, max(th, swatch)))
+
+        # Greedily wrap chips into centered rows that fit the box width.
+        rows: list[list[tuple[str, str, float, float]]] = []
+        current: list[tuple[str, str, float, float]] = []
+        current_w = 0.0
+        for chip in chips:
+            extra = chip[2] if not current else chip_gap + chip[2]
+            if current and current_w + extra > w:
+                rows.append(current)
+                current, current_w = [chip], chip[2]
+            else:
+                current.append(chip)
+                current_w += extra
+        if current:
+            rows.append(current)
+
+        row_h = max((c[3] for c in chips), default=swatch) + 10
+        legend_h = row_h * len(rows) + 6
+        plot_h = max(bottom - y0 - legend_h, 10)
+        diameter = max(int(min(plot_h, w)), 10)
+        cx = x + w / 2
+        cy = y0 + diameter / 2
+    else:
+        rows = None
+        row_h = 0.0
+        plot_h = bottom - y0
+        diameter = max(int(min(plot_h, w * 0.5)), 10)
+        cx = x + diameter / 2
+        cy = y0 + plot_h / 2
+
+    bbox = [cx - diameter / 2, cy - diameter / 2, cx + diameter / 2, cy + diameter / 2]
+
+    for start, sweep, color_name in slice_defs:
+        _fill_pieslice(ctx, bbox, start, sweep, color_name)
     # Crisp black separators/outline drawn on top, after all fills (including
     # dithered ones) so slice boundaries stay clean regardless of fill style.
-    for start_angle, sweep in slice_angles:
-        ctx.draw.pieslice(bbox, start_angle, start_angle + sweep, outline=palette.color("black"), width=2)
+    for start, sweep, _color_name in slice_defs:
+        ctx.draw.pieslice(bbox, start, start + sweep, outline=palette.color("black"), width=2)
     ctx.draw.ellipse(bbox, outline=palette.color("black"), width=2)
 
-    legend_x = x + diameter + 20
-    legend_w = w - diameter - 20
-    if legend_w > 30 and legend_entries:
-        row_h = max(plot_h / len(legend_entries), 18)
-        swatch = 14
-        label_font = get_font(13, bold=False)
-        for i, (label, frac, color_name) in enumerate(legend_entries):
-            ly = y0 + i * row_h
-            _fill_rect(ctx, (legend_x, ly + 2, legend_x + swatch, ly + 2 + swatch), color_name)
-            ctx.draw.rectangle(
-                [legend_x, ly + 2, legend_x + swatch, ly + 2 + swatch],
-                outline=palette.color("black"),
-            )
-            text = f"{label} ({frac * 100:.0f}%)"
-            ctx.draw.text(
-                (legend_x + swatch + 6, ly), text, font=label_font, fill=palette.color("black")
-            )
+    if legend_below and rows:
+        ly = cy + diameter / 2 + 10
+        for row in rows:
+            row_w = sum(c[2] for c in row) + 24 * (len(row) - 1)
+            lx = x + (w - row_w) / 2
+            for text, color_name, chip_w, _chip_h in row:
+                _fill_rect(ctx, (lx, ly + 2, lx + swatch, ly + 2 + swatch), color_name)
+                ctx.draw.rectangle(
+                    [lx, ly + 2, lx + swatch, ly + 2 + swatch], outline=palette.color("black")
+                )
+                ctx.draw.text(
+                    (lx + swatch + 6, ly), text, font=legend_font, fill=palette.color("black")
+                )
+                lx += chip_w + 24
+            ly += row_h
+    elif legend_entries:
+        legend_x = x + diameter + 20
+        legend_w = w - diameter - 20
+        if legend_w > 30:
+            side_row_h = max(plot_h / len(legend_entries), 18)
+            for i, (label, frac, color_name) in enumerate(legend_entries):
+                ly = y0 + i * side_row_h
+                _fill_rect(ctx, (legend_x, ly + 2, legend_x + swatch, ly + 2 + swatch), color_name)
+                ctx.draw.rectangle(
+                    [legend_x, ly + 2, legend_x + swatch, ly + 2 + swatch],
+                    outline=palette.color("black"),
+                )
+                text = f"{label} ({frac * 100:.0f}%)"
+                ctx.draw.text(
+                    (legend_x + swatch + 6, ly), text, font=legend_font, fill=palette.color("black")
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -898,6 +1126,7 @@ WIDGET_REGISTRY: dict[str, Callable[[Ctx], None]] = {
     "metric": draw_metric,
     "text_list": draw_text_list,
     "weather": draw_weather,
+    "forecast_strip": draw_forecast_strip,
     "calendar": draw_calendar,
     "alert_banner": draw_alert_banner,
     "progress": draw_progress,

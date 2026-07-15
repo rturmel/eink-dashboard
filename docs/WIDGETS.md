@@ -88,6 +88,7 @@ icon files needed).
 
 ```json
 {
+  "location": "Laval, Quebec",
   "condition": "rain",
   "temp": 58,
   "temp_unit": "°F",
@@ -100,8 +101,31 @@ icon files needed).
 `condition` accepts: `sunny`, `cloudy`, `rain`, `snow`, `storm`, `fog`,
 `clear_night` — plus common Home Assistant weather-entity state strings
 (`clear`, `partlycloudy`, `pouring`, `snowy-rainy`, `lightning-rainy`,
-etc.), which get mapped automatically. `high`/`low`/`humidity` are all
-optional.
+etc.), which get mapped automatically. `location`/`high`/`low`/`humidity`
+are all optional — `location` (a city name) draws as a small line above
+the icon, handy for a configurable-city publisher like
+`publisher_weather/publish_weather.py`.
+
+## `forecast_strip`
+
+A row of compact mini-forecasts (icon + hi/lo) — the short-range
+companion to `weather` above, meant to sit in a single short row beneath
+it rather than needing a full-size widget per day.
+
+```json
+{
+  "temp_unit": "°",
+  "days": [
+    {"label": "Tomorrow", "condition": "rain", "high": 22, "low": 14},
+    {"label": "Wed", "condition": "sunny", "high": 24, "low": 14},
+    {"label": "Thu", "condition": "storm", "high": 25, "low": 14}
+  ]
+}
+```
+
+Same `condition` values as `weather`. Any number of `days` works — they
+split the box width evenly, so more than 4-5 in a normal-width widget will
+get cramped.
 
 ## `calendar`
 
@@ -225,6 +249,23 @@ yellow, the next 3 get dithered blends (orange/gray/pink), covering up to
 6 visually distinct segments before repeating. Set `color` per segment
 (any name from the colors section above) to control this directly — e.g.
 group small categories into a gray "Other" slice.
+
+By default (`legend: "side"`, or just omit it) the legend sits to the
+right of the pie, sized to fill the box — good for a tall/narrow widget.
+Set `legend: "below"` (in `layout.yaml`'s style, not the pushed data) for
+a wide/short box instead — the pie centers horizontally and the legend
+becomes centered rows underneath it, wrapping automatically if the
+entries don't fit on one line:
+
+```yaml
+  - id: disk_pie
+    type: pie_chart
+    x: 7
+    y: 3
+    w: 5
+    h: 2
+    legend: "below"
+```
 
 ## `table`
 
