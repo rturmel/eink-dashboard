@@ -510,6 +510,21 @@ set `WEATHER_WIDGET_PREFIX` (default `""`) if you'd rather use different
 ids. `TEMPERATURE_UNIT` (default `celsius`, or `fahrenheit`) and
 `FORECAST_DAYS` (default `3`) are also configurable via env var.
 
+**If the numbers look off vs. Environment Canada / Meteomedia:** by
+default this pulls Environment Canada's own GEM model (`WEATHER_MODEL`
+defaults to `gem_seamless`) rather than Open-Meteo's global "Best Match"
+pick, specifically because Best Match can read noticeably different from
+Canadian sources for a Canadian city -- both ECCC's site and Meteomedia
+are ultimately built from GEM too, so this is the closest match available.
+Set `WEATHER_MODEL=""` to go back to Best Match (e.g. for a non-Canadian
+city), or any other model name from the
+[model list](https://open-meteo.com/en/docs) (e.g. `gfs_seamless` for
+NOAA, `ecmwf_ifs04` for ECMWF). One more source of any remaining gap:
+Open-Meteo's "current" values are interpolated from the model's latest
+run, not a live station observation like a weather site typically shows
+-- some difference from a physical station a few km away is normal even
+with the same underlying model.
+
 ## 7. Pi client (the physical display)
 
 ### Hardware assembly

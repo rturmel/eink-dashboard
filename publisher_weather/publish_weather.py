@@ -38,6 +38,16 @@ Config is entirely environment variables (no config file, no API key):
     TEMPERATURE_UNIT       "celsius" (default) or "fahrenheit"
     FORECAST_DAYS          how many extra days in the forecast strip,
                             default 3 (beyond today)
+    WEATHER_MODEL          default "gem_seamless" -- Environment Canada's own
+                            GEM model, the same source ECCC/Meteomedia use, so
+                            values match those sites far more closely than
+                            Open-Meteo's global "Best Match" default does for
+                            a Canadian city. Set to "" to use Best Match
+                            instead, or any other model name from
+                            https://open-meteo.com/en/docs if you're not in
+                            Canada. Falls back to Best Match automatically if
+                            the chosen model doesn't support a requested
+                            field (e.g. GEM has no UV index).
     BROKER_URL              e.g. http://localhost:9090          (required)
     DASHBOARD_TOKEN         same token the broker/other publishers use
                             (required unless the broker has no token
@@ -187,8 +197,26 @@ def aqi_category(aqi: float) -> str:
     return "Hazardous"
 
 
-def fetch_forecast(lat: float, lon: float, temp_unit: str, forecast_days: int) -> dict[str, Any]:
-    params = {
+def fetch_forecast(
+    lat: float, lon: float, temp_unit: str, forecast_days: int, model: Optional[str] = None
+) -> dict[str, Any]:
+    """
+    `model`, if set, is Open-Meteo's `models` param (e.g. "gem_seamless")
+    -- without it, Open-Meteo picks whatever single best global model it
+    thinks is best for the coordinates ("Best Match"), which for a
+    Canadian location is often NOT Environment Canada's own GEM model, so
+    it can read noticeably different from ECCC/Meteomedia (both of which
+    are ultimately fed by GEM). "gem_seamless" blends GEM's high-res
+    2.5km HRDPS (short range) with its coarser Regional/Global runs
+    (longer range) into one series -- the closest match to what Canadian
+    sources show, without HRDPS's 2-day forecast cutoff leaving later
+    days empty.
+
+    Not every variable is available from every model (GEM doesn't compute
+    UV index, for instance) -- if the model-specific request 400s, the
+    caller should retry without `model` rather than fail outright.
+    """
+    params: dict[str, Any] = {
         "latitude": round(lat, 4),
         "longitude": round(lon, 4),
         "current": "temperature_2m,relative_humidity_2m,weather_code,is_day",
@@ -198,6 +226,8 @@ def fetch_forecast(lat: float, lon: float, temp_unit: str, forecast_days: int) -
         "forecast_days": max(forecast_days + 1, 2),
         "temperature_unit": temp_unit,
     }
+    if model:
+        params["models"] = model
     return _get_json(FORECAST_URL, params)
 
 
@@ -222,20 +252,59 @@ def fetch_air_quality(lat: float, lon: float) -> Optional[float]:
     return float(aqi) if aqi is not None else None
 
 
+def _has_real_values(values: Any) -> bool:
+    """True if `values` is a non-empty list containing at least one
+    non-null entry. GEM accepts the `uv_index` variable name (so the key
+    comes back present, with a real-looking non-empty list) but doesn't
+    actually compute it -- it fills every slot with `null` rather than
+    omitting the key or erroring. A plain truthiness/emptiness check
+    treats that null-filled list as "data present" and never looks
+    further, which is how UV silently disappeared even though nothing
+    raised an error."""
+    return isinstance(values, list) and any(v is not None for v in values)
+
+
 def _current_uv_index(forecast: dict[str, Any]) -> Optional[float]:
     """The forecast API only exposes uv_index via hourly/daily, not
-    current -- find the hourly entry matching the current timestamp; fall
-    back to today's daily max if that lookup ever comes up empty (a
-    reasonable "how strong does it get today" proxy either way)."""
+    current -- find the hourly entry closest to the current timestamp;
+    fall back to today's daily max only if that lookup can't be done at
+    all (a reasonable "how strong does it get today" proxy either way).
+
+    Nearest-match, not exact-match: Open-Meteo's `current` block is
+    interpolated to 15-minute granularity ("2026-07-15T10:06") while
+    `hourly` only has on-the-hour entries ("2026-07-15T10:00") -- an exact
+    string match only succeeds when a run happens to land exactly on the
+    hour (~1 in 4 runs), so most of the time this silently fell through to
+    the daily *peak* instead of the actual current value -- e.g. reporting
+    today's high of 7 at 10am when the real current UV was 3. That's a
+    large, systematic overstatement outside peak sun hours, not just
+    rounding noise.
+
+    Also skips null entries when picking the nearest hour -- see
+    _has_real_values() -- rather than picking the nearest INDEX
+    regardless of whether that slot actually has a value.
+    """
     current_time = (forecast.get("current") or {}).get("time")
     hourly = forecast.get("hourly") or {}
     times, values = hourly.get("time") or [], hourly.get("uv_index") or []
-    if current_time and current_time in times:
-        return values[times.index(current_time)]
+    if current_time and times and _has_real_values(values):
+        try:
+            current_dt = datetime.fromisoformat(current_time)
+            candidates = [
+                i for i in range(min(len(times), len(values))) if values[i] is not None
+            ]
+            if candidates:
+                closest = min(
+                    candidates,
+                    key=lambda i: abs((datetime.fromisoformat(times[i]) - current_dt).total_seconds()),
+                )
+                return values[closest]
+        except ValueError:
+            pass  # malformed timestamp somewhere -- fall through to daily max
 
     daily = forecast.get("daily") or {}
     daily_uv = daily.get("uv_index_max") or []
-    return daily_uv[0] if daily_uv else None
+    return next((v for v in daily_uv if v is not None), None)
 
 
 def build_payload(
@@ -317,6 +386,89 @@ def build_payload(
     return payload
 
 
+def _fetch_best_match_supplement(lat: float, lon: float, forecast_days: int) -> dict[str, Any]:
+    """A small Best Match (no `models` override) request for the fields
+    Environment Canada's GEM model doesn't handle well: current humidity,
+    and UV index (hourly + daily). One combined call rather than two
+    separate ones, to keep the total request count down.
+
+    Humidity specifically: side-by-side testing for Laval, QC found GEM
+    consistently under-reporting relative humidity (58% vs. Best Match's
+    67%, which matched other Canadian weather sites) at the same instant
+    GEM's own temperature was spot-on -- a genuine per-variable model
+    accuracy difference, not a code bug. Different models are good at
+    different things; there's no reason to accept GEM's weaker variable
+    just because its temperature is the reason it was selected."""
+    return _get_json(FORECAST_URL, {
+        "latitude": round(lat, 4),
+        "longitude": round(lon, 4),
+        "current": "relative_humidity_2m",
+        "hourly": "uv_index",
+        "daily": "uv_index_max",
+        "timezone": "auto",
+        "forecast_days": max(forecast_days + 1, 2),
+    })
+
+
+def fetch_forecast_with_fallback(
+    lat: float, lon: float, temp_unit: str, forecast_days: int, model: Optional[str]
+) -> dict[str, Any]:
+    """fetch_forecast(), but resilient to a specific `model` (e.g. GEM)
+    not fully supporting -- or not being particularly accurate at --
+    every requested variable:
+
+    - Hard failure (HTTP 400, the whole request rejected) -- falls back
+      to Open-Meteo's own "Best Match" selection entirely.
+    - Silent partial omission -- GEM doesn't compute UV index at all, and
+      Open-Meteo's response for that case is a 200 OK with `uv_index`
+      keys present but filled entirely with `null` rather than omitted or
+      erroring. That doesn't raise an exception and isn't caught by a
+      plain emptiness check either (see _has_real_values()), so it's
+      checked for explicitly.
+    - Humidity accuracy -- unconditionally overridden from Best Match
+      when a specific `model` is in use (see _fetch_best_match_supplement
+      for why): GEM being the better source for temperature doesn't make
+      it the better source for every other field too.
+    """
+    if not model:
+        return fetch_forecast(lat, lon, temp_unit, forecast_days)
+
+    try:
+        forecast = fetch_forecast(lat, lon, temp_unit, forecast_days, model)
+    except WeatherError as exc:
+        log.warning(
+            "forecast request with models=%s failed (%s); retrying with Open-Meteo's "
+            "default best-match model instead", model, exc,
+        )
+        return fetch_forecast(lat, lon, temp_unit, forecast_days)
+
+    needs_uv = not (
+        _has_real_values((forecast.get("hourly") or {}).get("uv_index"))
+        or _has_real_values((forecast.get("daily") or {}).get("uv_index_max"))
+    )
+    try:
+        supplement = _fetch_best_match_supplement(lat, lon, forecast_days)
+    except WeatherError as exc:
+        log.warning(
+            "Best Match supplement request (humidity%s) failed (continuing with "
+            "models=%s's own values): %s", " + UV backfill" if needs_uv else "", model, exc,
+        )
+        return forecast
+
+    supplement_current = supplement.get("current") or {}
+    if supplement_current.get("relative_humidity_2m") is not None:
+        forecast.setdefault("current", {})["relative_humidity_2m"] = supplement_current[
+            "relative_humidity_2m"
+        ]
+    if needs_uv:
+        forecast["hourly"] = supplement.get("hourly") or forecast.get("hourly")
+        forecast.setdefault("daily", {})["uv_index_max"] = (supplement.get("daily") or {}).get(
+            "uv_index_max"
+        )
+
+    return forecast
+
+
 def push_to_broker(broker_url: str, token: str, payload: dict[str, dict]) -> None:
     url = f"{broker_url.rstrip('/')}/api/v1/widgets/bulk"
     body = json.dumps(payload).encode("utf-8")
@@ -347,6 +499,14 @@ def main() -> int:
         log.warning("TEMPERATURE_UNIT %r not recognized, defaulting to celsius", temp_unit)
         temp_unit = "celsius"
     forecast_days = int(os.environ.get("FORECAST_DAYS", "3"))
+    # Environment Canada's own GEM model (blended near-term HRDPS +
+    # longer-range Regional/Global via "gem_seamless") by default, since
+    # this is what ECCC/Meteomedia are themselves built from -- Open-
+    # Meteo's global "Best Match" model can read noticeably different for
+    # a Canadian city. Set WEATHER_MODEL="" (empty) to opt back into Best
+    # Match, or to any other model name from https://open-meteo.com/en/docs
+    # if you're not in Canada.
+    model = os.environ.get("WEATHER_MODEL", "gem_seamless").strip() or None
     broker_url = os.environ.get("BROKER_URL", "")
     token = os.environ.get("DASHBOARD_TOKEN", "")
     prefix = os.environ.get("WEATHER_WIDGET_PREFIX", "")
@@ -357,7 +517,7 @@ def main() -> int:
 
     try:
         lat, lon, location = geocode(city, country_filter)
-        forecast = fetch_forecast(lat, lon, temp_unit, forecast_days)
+        forecast = fetch_forecast_with_fallback(lat, lon, temp_unit, forecast_days, model)
         aqi = fetch_air_quality(lat, lon)
         payload = build_payload(forecast, aqi, location, prefix, temp_unit)
     except WeatherError as exc:

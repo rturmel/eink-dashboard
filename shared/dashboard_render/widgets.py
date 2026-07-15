@@ -431,15 +431,25 @@ def _paste_silhouette(
 
 
 def _icon_sunny(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int) -> None:
+    # The rays extend past the disc on every side, so a sun drawn at the
+    # same `r` as the other icons (cloud, etc.) ends up with noticeably
+    # more total footprint than they have -- shrink the disc itself and
+    # keep the rays short/close to it so the whole icon's visual size
+    # roughly matches the others instead of dominating the widget.
+    disc_r = int(r * 0.7)
     for i in range(8):
         a = i * math.pi / 4
-        x1, y1 = cx + math.cos(a) * (r + 6), cy + math.sin(a) * (r + 6)
-        x2, y2 = cx + math.cos(a) * (r + 16), cy + math.sin(a) * (r + 16)
-        draw.line([(x1, y1), (x2, y2)], fill=palette.color("yellow"), width=4)
+        x1, y1 = cx + math.cos(a) * (disc_r + 3), cy + math.sin(a) * (disc_r + 3)
+        x2, y2 = cx + math.cos(a) * (disc_r + 9), cy + math.sin(a) * (disc_r + 9)
+        draw.line([(x1, y1), (x2, y2)], fill=palette.color("yellow"), width=3)
     # Outline drawn after the rays so the sun's disc reads as crisp/solid
     # rather than the rays visually poking through a soft edge.
     _paste_silhouette(
-        draw, [[cx - r, cy - r, cx + r, cy + r]], fill="yellow", outline="black", outline_w=2
+        draw,
+        [[cx - disc_r, cy - disc_r, cx + disc_r, cy + disc_r]],
+        fill="yellow",
+        outline="black",
+        outline_w=2,
     )
 
 
