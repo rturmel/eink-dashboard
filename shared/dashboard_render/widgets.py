@@ -470,17 +470,30 @@ def _icon_cloud(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int, color="blac
 
 def _icon_rain(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int) -> None:
     _icon_cloud(draw, cx, cy - 8, r, color="black")
-    for dx in (-r * 0.6, 0, r * 0.6):
+    # Drop length/thickness/spacing all scale with r -- at forecast_strip's
+    # small icon sizes (r ~ 8), the old fixed 6px/4px-wide drops packed
+    # into a spacing of r*0.6 overlapped into one continuous zigzag that
+    # read as a lightning bolt rather than three separate raindrops.
+    drop_len = max(r * 0.35, 3)
+    drop_w = max(int(r * 0.14), 2)
+    for dx in (-r * 0.9, 0, r * 0.9):
         x = cx + dx
-        draw.line([(x, cy + r * 0.5), (x - 6, cy + r * 0.9)], fill=palette.color("black"), width=4)
+        y0 = cy + r * 0.5
+        draw.line(
+            [(x, y0), (x - drop_len, y0 + drop_len)], fill=palette.color("black"), width=drop_w
+        )
 
 
 def _icon_snow(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int) -> None:
     _icon_cloud(draw, cx, cy - 8, r, color="black")
-    for dx in (-r * 0.6, 0, r * 0.6):
+    # Same scaling fix as _icon_rain above -- fixed 5px cross arms at
+    # r*0.6 spacing merged into a blob at small sizes.
+    arm_len = max(r * 0.3, 3)
+    arm_w = max(int(r * 0.12), 2)
+    for dx in (-r * 0.9, 0, r * 0.9):
         x, y = cx + dx, cy + r * 0.7
-        draw.line([(x - 5, y), (x + 5, y)], fill=palette.color("black"), width=3)
-        draw.line([(x, y - 5), (x, y + 5)], fill=palette.color("black"), width=3)
+        draw.line([(x - arm_len, y), (x + arm_len, y)], fill=palette.color("black"), width=arm_w)
+        draw.line([(x, y - arm_len), (x, y + arm_len)], fill=palette.color("black"), width=arm_w)
 
 
 def _icon_storm(draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int) -> None:
