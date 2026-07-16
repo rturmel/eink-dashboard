@@ -151,8 +151,9 @@ def draw_header(ctx: Ctx) -> None:
     if subtitle:
         sub_font = get_font(15, bold=False)
         tw, th = _text_size(ctx.draw, title, title_font)
+        subtitle_color = ctx.data.get("subtitle_color", "black")
         ctx.draw.text(
-            (ix, iy + th + 4), subtitle, font=sub_font, fill=palette.color("black")
+            (ix, iy + th + 4), subtitle, font=sub_font, fill=palette.color(subtitle_color)
         )
 
     if time_str:

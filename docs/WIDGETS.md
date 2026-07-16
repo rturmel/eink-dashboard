@@ -51,11 +51,19 @@ matter more.
 Full-width title bar, drawn once per row at the top of the layout.
 
 ```json
-{"title": "Home Dashboard", "subtitle": "optional smaller line", "time": "3:45 PM"}
+{
+  "title": "Home Dashboard",
+  "subtitle": "optional smaller line",
+  "subtitle_color": "red",
+  "time": "3:45 PM"
+}
 ```
 
 `time` is optional — both `pi_client` and `preview` fill it in
 automatically with the current local time if you don't provide one.
+`subtitle_color` is optional (defaults to black) — any solid color name
+from the colors section above (blends don't make sense on text). Used by
+`publisher_pi_temp/publish_pi_temp.py` to flag an overheating board.
 
 ## `metric`
 

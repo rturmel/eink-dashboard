@@ -59,6 +59,10 @@ Regenerate them anytime with `python3 docs/mockups/generate_mockups.py`.
   own, that pulls current conditions/UV/air quality/short-term forecast
   for a configurable city from Open-Meteo (free, no API key needed) and
   pushes them to the broker.
+- **publisher_pi_temp/** — a small one-shot cron script that, unlike every
+  other publisher here, has to run **on the Pi itself** — it reads the
+  board's own temperature sensor and pushes it into the header's small
+  subtitle line.
 - **pi_client/** — runs on the Raspberry Pi. Connects to the broker,
   renders the dashboard, and pushes it to the physical panel — rate
   limited to protect the hardware (see "About this display" below).
@@ -133,6 +137,7 @@ publisher_ups/             apcupsd -> broker cron script
 publisher_rooms/           HA REST API room sensors -> broker cron script
 publisher_zabbix/           Zabbix JSON-RPC API -> broker cron script (own schedule)
 publisher_weather/          Open-Meteo (no API key) -> broker cron script (own schedule)
+publisher_pi_temp/          Pi's own temp sensor -> broker cron script (runs on the Pi itself)
 pi_client/                 runs on the Pi, renders + pushes to hardware
 preview/                   local web preview
 shared/dashboard_render/   rendering + widget library used by both clients

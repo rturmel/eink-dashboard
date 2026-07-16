@@ -525,6 +525,25 @@ run, not a live station observation like a weather site typically shows
 -- some difference from a physical station a few km away is normal even
 with the same underlying model.
 
+**Built-in sanity check against a real station:** every run also compares
+the model's current temperature/humidity against the nearest actual
+Environment Canada surface observation (`api.weather.gc.ca`'s
+`swob-realtime` feed -- real instrument readings, not another forecast),
+and logs a warning if they diverge by more than `WEATHER_SANITY_THRESHOLD_C`
+(default `3.0`°C). This is advisory only -- it never changes what's pushed
+to the dashboard, only what shows up in the cron log, e.g.:
+
+```
+WARNING publish_weather: sanity check: model temp=20.3°C vs. MONTREAL/PIERRE
+ELLIOTT TRUDEAU INTL (7.9km away, 3min old)=23.0°C (delta -2.7°C), humidity
+model=58% station=55% (delta +3pt) -- exceeds 3.0°C threshold
+```
+
+Tune it with `WEATHER_SANITY_RADIUS_KM` (default `20`, how far to search
+for a station), `WEATHER_SANITY_MAX_AGE_MIN` (default `120`, ignore stale
+observations), or turn it off with `WEATHER_SANITY_CHECK=false` (saves one
+HTTP call per run).
+
 ## 7. Pi client (the physical display)
 
 ### Hardware assembly
@@ -583,3 +602,42 @@ touching hardware. The preview web app from section 1 is a nicer version
 of the same idea, meant to be left running continuously — it updates live
 as the broker's state changes (no debouncing — that only applies to the
 physical panel), so it's the fastest way to iterate on layout changes.
+
+### Optional: Pi board temperature in the header
+
+`publisher_pi_temp/publish_pi_temp.py` is the one publisher in this
+project that runs **on the Pi itself**, not wherever's convenient — it
+reads the SoC's own temperature sensor (`vcgencmd measure_temp`, falling
+back to `/sys/class/thermal/thermal_zone0/temp` if `vcgencmd` isn't on
+PATH) and pushes it into the header's small subtitle line, e.g. "Pi
+45.6°C" right under "Home Dashboard" — replacing the generic "Data
+updated ..." placeholder text that shows there otherwise. Pure standard
+library, same one-shot-cron pattern as every other publisher:
+
+```bash
+cd publisher_pi_temp
+python3 publish_pi_temp.py --dry-run   # reads the sensor, prints the payload, doesn't push
+```
+
+```bash
+crontab -e
+```
+
+```cron
+*/5 * * * * BROKER_URL=http://localhost:9090 DASHBOARD_TOKEN=your-broker-token \
+    /usr/bin/python3 /home/pi/eink_dashboard/publisher_pi_temp/publish_pi_temp.py \
+    >> /var/log/pi_temp_publish.log 2>&1
+```
+
+`TEMPERATURE_UNIT` (default `celsius`) and `PI_TEMP_LABEL` (default
+`"Pi"`) are configurable via env var. `PI_TEMP_WARN_C` (default `80`,
+checked in Celsius regardless of `TEMPERATURE_UNIT`) turns the subtitle
+red and appends " (warm)" once the reading reaches it — 80°C is where
+Raspberry Pi's own firmware starts thermally throttling the SoC (85°C is
+the hard limit), so this should rarely if ever trigger under this
+project's light workload; if it does, it's worth a look (blocked vents, a
+stuffy case, etc.).
+
+No `layout.yaml` changes needed — the `header` widget already exists;
+nothing else in this project pushes to it, so there's nothing to
+conflict with.

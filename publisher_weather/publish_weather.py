@@ -53,6 +53,25 @@ Config is entirely environment variables (no config file, no API key):
                             (required unless the broker has no token
                             configured)
     WEATHER_WIDGET_PREFIX  default ""
+    WEATHER_SANITY_CHECK   default "true" -- after fetching, cross-checks the
+                            model's current temperature/humidity against the
+                            nearest real Environment Canada station
+                            observation (api.weather.gc.ca's swob-realtime
+                            feed -- actual instrument readings, not another
+                            forecast) and logs a warning if they diverge by
+                            more than WEATHER_SANITY_THRESHOLD_C. This is
+                            advisory only: it never changes what gets pushed
+                            to the dashboard, only what gets logged. Set to
+                            "false" to skip it entirely (one extra HTTP call
+                            per run otherwise).
+    WEATHER_SANITY_THRESHOLD_C   default "3.0" -- Celsius delta that triggers
+                            a warning log line (temperature is compared in
+                            Celsius regardless of TEMPERATURE_UNIT)
+    WEATHER_SANITY_RADIUS_KM     default "20" -- how far to search for a
+                            real station observation to compare against
+    WEATHER_SANITY_MAX_AGE_MIN   default "120" -- ignore station observations
+                            older than this (stale readings aren't a
+                            meaningful "ground truth")
 
 Usage:
     python3 publish_weather.py            # geocode, fetch, push
@@ -71,12 +90,13 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 logging.basicConfig(
@@ -87,6 +107,10 @@ log = logging.getLogger("publish_weather")
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 AIR_QUALITY_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
+# Environment Canada's real-time surface observations (actual instruments --
+# airports, co-op stations, buoys -- not a forecast model at all). Used only
+# for the optional sanity check below, never for the pushed payload itself.
+ECCC_SWOB_URL = "https://api.weather.gc.ca/collections/swob-realtime/items"
 
 # WMO weather codes (the standard Open-Meteo's `weather_code` uses) mapped
 # to this project's icon set (shared/dashboard_render/widgets.py's
@@ -249,6 +273,121 @@ def fetch_air_quality(lat: float, lon: float) -> Optional[float]:
         values = hourly.get("us_aqi") or []
         aqi = values[0] if values else None
     return float(aqi) if aqi is not None else None
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(min(1.0, math.sqrt(a)))
+
+
+def _parse_swob_time(value: Any) -> Optional[datetime]:
+    """SWOB's date_tm is UTC, formatted like "2026-07-16T17:35:00Z" --
+    datetime.fromisoformat() (on Python < 3.11, which is what a Pi/older
+    Ubuntu box may still ship) chokes on the trailing "Z", so it's swapped
+    for an explicit UTC offset first."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def fetch_station_observation(
+    lat: float, lon: float, radius_km: float, max_age_min: float
+) -> Optional[dict[str, Any]]:
+    """Returns the nearest real Environment Canada surface observation
+    (station name, distance, temperature, humidity, age) within
+    `radius_km`, or None if the feed is unreachable or nothing usable is
+    nearby -- this is a best-effort sanity check, not a hard dependency,
+    so any failure here should never break the main publish flow.
+
+    Queried from api.weather.gc.ca's swob-realtime collection -- actual
+    instrument readings from airports/co-op stations/buoys, not another
+    forecast model, which is what makes it useful as an independent check
+    on Open-Meteo's model output rather than just comparing one forecast
+    to another."""
+    deg_lat = radius_km / 111.0
+    deg_lon = radius_km / (111.0 * max(math.cos(math.radians(lat)), 0.1))
+    bbox = f"{lon - deg_lon},{lat - deg_lat},{lon + deg_lon},{lat + deg_lat}"
+
+    try:
+        result = _get_json(ECCC_SWOB_URL, {"bbox": bbox, "limit": 50, "f": "json"})
+    except WeatherError as exc:
+        log.info("sanity check: couldn't reach ECCC swob-realtime (skipping): %s", exc)
+        return None
+
+    now = datetime.now(timezone.utc)
+    best = None
+    for feature in result.get("features") or []:
+        props = feature.get("properties") or {}
+        temp = props.get("air_temp")
+        if temp is None:
+            continue
+        observed_at = _parse_swob_time(props.get("date_tm"))
+        if observed_at is None:
+            continue
+        age_min = (now - observed_at).total_seconds() / 60.0
+        if age_min < 0 or age_min > max_age_min:
+            continue
+        coords = (feature.get("geometry") or {}).get("coordinates") or [None, None]
+        stn_lon, stn_lat = coords[0], coords[1]
+        if stn_lat is None or stn_lon is None:
+            continue
+        distance_km = _haversine_km(lat, lon, stn_lat, stn_lon)
+        if best is None or distance_km < best["distance_km"]:
+            best = {
+                "station": props.get("stn_nam") or "unknown station",
+                "distance_km": distance_km,
+                "temp_c": float(temp),
+                "humidity": props.get("rel_hum"),
+                "age_min": age_min,
+            }
+
+    return best
+
+
+def sanity_check_forecast(
+    forecast: dict[str, Any], lat: float, lon: float, temp_unit: str,
+    threshold_c: float, radius_km: float, max_age_min: float,
+) -> None:
+    """Logs a warning (never raises) if the forecast's current
+    temperature/humidity diverge from the nearest real ECCC station
+    observation by more than `threshold_c`. Advisory only -- this is about
+    catching "the model is off today" situations like the discrepancies
+    found manually against Meteomedia/Google/meteo.gc.ca during testing,
+    without needing someone to notice and paste a screenshot every time."""
+    station = fetch_station_observation(lat, lon, radius_km, max_age_min)
+    if station is None:
+        log.info("sanity check: no usable nearby ECCC station observation found")
+        return
+
+    current = forecast.get("current") or {}
+    model_temp = current.get("temperature_2m")
+    if model_temp is None:
+        return
+    model_temp_c = (model_temp - 32) * 5 / 9 if temp_unit == "fahrenheit" else model_temp
+    temp_delta = model_temp_c - station["temp_c"]
+
+    humidity_note = ""
+    model_humidity = current.get("relative_humidity_2m")
+    if model_humidity is not None and station["humidity"] is not None:
+        humidity_delta = model_humidity - station["humidity"]
+        humidity_note = f", humidity model={model_humidity:.0f}% station={station['humidity']:.0f}% (delta {humidity_delta:+.0f}pt)"
+
+    msg = (
+        f"model temp={model_temp_c:.1f}°C vs. {station['station']} "
+        f"({station['distance_km']:.1f}km away, {station['age_min']:.0f}min old)="
+        f"{station['temp_c']:.1f}°C (delta {temp_delta:+.1f}°C){humidity_note}"
+    )
+    if abs(temp_delta) >= threshold_c:
+        log.warning("sanity check: %s -- exceeds %.1f°C threshold", msg, threshold_c)
+    else:
+        log.info("sanity check: %s", msg)
 
 
 def _has_real_values(values: Any) -> bool:
@@ -515,6 +654,12 @@ def main() -> int:
     broker_url = os.environ.get("BROKER_URL", "")
     token = os.environ.get("DASHBOARD_TOKEN", "")
     prefix = os.environ.get("WEATHER_WIDGET_PREFIX", "")
+    sanity_check = os.environ.get("WEATHER_SANITY_CHECK", "true").strip().lower() not in (
+        "false", "0", "no",
+    )
+    sanity_threshold_c = float(os.environ.get("WEATHER_SANITY_THRESHOLD_C", "3.0"))
+    sanity_radius_km = float(os.environ.get("WEATHER_SANITY_RADIUS_KM", "20"))
+    sanity_max_age_min = float(os.environ.get("WEATHER_SANITY_MAX_AGE_MIN", "120"))
 
     if not args.dry_run and not broker_url:
         log.error("BROKER_URL is not set (e.g. http://localhost:9090)")
@@ -528,6 +673,17 @@ def main() -> int:
     except WeatherError as exc:
         log.error("%s", exc)
         return 1
+
+    if sanity_check:
+        # Advisory only -- never let a problem here (network, parsing,
+        # whatever) fail the actual publish.
+        try:
+            sanity_check_forecast(
+                forecast, lat, lon, temp_unit,
+                sanity_threshold_c, sanity_radius_km, sanity_max_age_min,
+            )
+        except Exception as exc:  # noqa: BLE001 -- deliberately broad, see above
+            log.info("sanity check failed unexpectedly (ignoring): %s", exc)
 
     if not payload:
         log.error("nothing resolved to push")
