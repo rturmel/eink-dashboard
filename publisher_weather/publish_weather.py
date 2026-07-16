@@ -98,7 +98,6 @@ _WMO_RAIN = {51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82}
 _WMO_SNOW = {71, 73, 75, 77, 85, 86}
 _WMO_STORM = {95, 96, 99}
 
-_DAY_LABELS = ["Tomorrow", "Wed", "Thu", "Fri", "Sat", "Sun", "Mon", "Tue"]
 
 
 class WeatherError(RuntimeError):
@@ -363,9 +362,15 @@ def build_payload(
 
     forecast_days = []
     for i in range(1, len(daily_times)):
-        try:
-            label = _DAY_LABELS[i - 1]
-        except IndexError:
+        # "Tomorrow" for the first forecast day; every day after that gets
+        # its real weekday abbreviation computed from the API's own date
+        # (daily_times[i]) rather than a fixed Tomorrow/Wed/Thu/... list --
+        # that static list only happened to be correct when run on a
+        # Tuesday, since it assumed "the day after tomorrow" is always
+        # Wednesday.
+        if i == 1:
+            label = "Tomorrow"
+        else:
             try:
                 label = datetime.fromisoformat(daily_times[i]).strftime("%a")
             except ValueError:
