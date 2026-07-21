@@ -13,7 +13,13 @@
 #   2. Installs system packages (python3-venv, DejaVu fonts, git)
 #   3. Creates a venv and installs Python dependencies
 #   4. Clones Waveshare's official driver repo and vendors the
-#      epd10in85g module + its dependencies next to client.py
+#      epd10in85g module + its dependencies next to client.py. This panel
+#      is new/large enough that Waveshare ships its driver in a separate
+#      location (E-paper_Separate_Program/10.85inch_e-Paper_G/) from the
+#      shared waveshare_epd library everything else lives in -- both get
+#      vendored, with the separate-program epd10in85g.py/epdconfig.py
+#      pair taking precedence since they're the ones actually meant to
+#      work together.
 #   5. Copies config.example.yaml -> config.yaml if you don't have one yet
 #   6. Installs + enables the systemd service so the dashboard starts on boot
 
@@ -41,11 +47,23 @@ python3 -m venv venv
 
 echo "== 4/6: Vendoring the Waveshare e-Paper driver =="
 if [ ! -d "waveshare_epd" ]; then
-  tmp_dir=$(mktemp -d)
+  # Cloned under $HOME rather than the system /tmp -- on a Pi Zero, /tmp is
+  # often a small tmpfs and this clone (full history-less, but still has
+  # every panel model's demo code) can be big enough to fill it.
+  tmp_dir=$(mktemp -d -p "$HOME")
   git clone --depth 1 https://github.com/waveshare/e-Paper.git "$tmp_dir/e-Paper"
   cp -r "$tmp_dir/e-Paper/RaspberryPi_JetsonNano/python/lib/waveshare_epd" ./waveshare_epd
+  # The 10.85" (G) panel isn't in the shared library above -- Waveshare
+  # ships it separately, as its own epd10in85g.py + a matching epdconfig.py
+  # (the low-level SPI/GPIO module every panel driver depends on). Overlay
+  # that matched pair on top rather than mixing epd10in85g.py with whatever
+  # epdconfig.py the shared library happened to vendor, since they're meant
+  # to travel together.
+  separate_lib="$tmp_dir/e-Paper/E-paper_Separate_Program/10.85inch_e-Paper_G/RaspberryPi/python/lib"
+  cp "$separate_lib/epd10in85g.py" ./waveshare_epd/epd10in85g.py
+  cp "$separate_lib/epdconfig.py" ./waveshare_epd/epdconfig.py
   rm -rf "$tmp_dir"
-  echo "vendored waveshare_epd/ next to client.py"
+  echo "vendored waveshare_epd/ next to client.py (epd10in85g.py + epdconfig.py from the separate-program source)"
 else
   echo "waveshare_epd/ already present, skipping clone"
 fi

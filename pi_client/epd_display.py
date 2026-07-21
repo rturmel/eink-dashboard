@@ -14,11 +14,25 @@ debouncing in client.py, not here.
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 
 from PIL import Image
 
 log = logging.getLogger("epd_display")
+
+# The vendored epd10in85g.py (see install.sh) comes from Waveshare's
+# "separate program" source for this panel, not the shared waveshare_epd
+# library the rest of the vendored files come from -- and unlike that
+# shared library, it does a flat `import epdconfig` rather than a relative
+# package import. Waveshare's own example scripts work around this by
+# adding that specific lib/ folder directly to sys.path before importing;
+# doing the same here (rather than editing their vendored file) so
+# `import epdconfig` inside epd10in85g.py resolves to
+# waveshare_epd/epdconfig.py.
+_WAVESHARE_EPD_DIR = str(Path(__file__).parent / "waveshare_epd")
+if _WAVESHARE_EPD_DIR not in sys.path:
+    sys.path.insert(0, _WAVESHARE_EPD_DIR)
 
 
 class EPDDisplay:
