@@ -52,7 +52,9 @@ class EPDDisplay:
                 from waveshare_epd import epd10in85g  # type: ignore
 
                 self._epd = epd10in85g.EPD()
-                self._epd.init()
+                # Capitalized -- this panel's separate-program driver differs
+                # from the lowercase init() most other Waveshare models use.
+                self._epd.Init()
                 log.info("initialized epd10in85g hardware driver")
             except Exception as exc:  # noqa: BLE001
                 log.warning(
