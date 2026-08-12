@@ -1,7 +1,7 @@
 # Waveshare Support Report — 10.85inch e-Paper HAT+ (G)
 
 **Product:** 10.85inch e-Paper HAT+ (G), 1360×480, 4-colour (black/white/red/yellow)
-**Symptom:** Panel never displays anything. No flash, no flicker, no partial change, under any condition.
+**Symptom:** Panel does not display. It painted **once**, partially, and has never repeated despite dozens of attempts in the identical configuration.
 **Status:** Reproduced after full RMA replacement of both panel and driver HAT.
 
 ---
@@ -127,6 +127,18 @@ volt=1.3500V     (varies 1.20–1.35V with load — normal DVFS)
 ```
 
 No undervoltage detected at any point, on either power supply.
+
+---
+
+## One successful partial refresh — not reproducible
+
+On a single occasion, the official C demo (`EPD_10in85g_test`, built with WiringPi) ran on a Raspberry Pi 3 Model B and the panel **visibly refreshed**, flashing through its colour passes as expected.
+
+That refresh did not complete. It left a faint but permanent darker band across roughly the bottom 30% of the panel — e-ink retains an image only where the particles were actually driven, so the refresh began and stopped partway through.
+
+It has never repeated. Since then, in the identical configuration (same Pi 3B, same power supply, same cable, same interposer, same binary, recompiled), the demo has been run more than a dozen times with full power cycles between attempts and hangs at the same point every time: the busy wait following command `0x04` (POWER_ON).
+
+Hardware that works once, produces a partial result, and then fails consistently is the behaviour this report is ultimately asking about.
 
 ---
 

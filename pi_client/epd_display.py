@@ -49,13 +49,13 @@ class EPDDisplay:
 
         if not dry_run:
             try:
-                # Our corrected driver, not Waveshare's vendored Python one.
-                # Theirs holds CS low across the whole Init() register
-                # sequence, so nothing latches and the panel never completes
-                # POWER_ON -- see the module docstring in epd10in85g_fixed.py.
-                # It still relies on the vendored epdconfig.py + DEV_Config
-                # shared library for the actual GPIO/SPI calls.
-                import epd10in85g_fixed as epd10in85g  # type: ignore
+                # Waveshare's Python driver for this panel hangs forever in
+                # Init(), waiting on BUSY after POWER_ON -- their C driver for
+                # the same panel works. So we call the C driver directly via
+                # ctypes rather than using their Python one. See the module
+                # docstring in epd10in85g_clib.py, including the gcc command
+                # that builds libepd10in85g.so.
+                import epd10in85g_clib as epd10in85g  # type: ignore
 
                 self._epd = epd10in85g.EPD()
                 # Capitalized -- this panel's separate-program driver differs
