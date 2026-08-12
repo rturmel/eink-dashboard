@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import time
 from pathlib import Path
 
 from PIL import Image
@@ -51,6 +52,26 @@ logger = logging.getLogger(__name__)
 
 EPD_WIDTH = 1360 // 2  # 680 -- half the panel, one IC's worth
 EPD_HEIGHT = 480
+
+# How long to wait after powering the panel before initialising it.
+#
+# THIS IS THE FIX FOR THE PANEL NOT WORKING AT ALL. Waveshare's
+# DEV_Module_Init() raises the PWR pin (GPIO18) and then proceeds straight
+# into reset and the register sequence within milliseconds. On this panel
+# that is too fast: its internal supply has not stabilised, command 0x04
+# (POWER_ON) never completes, and BUSY is never released -- the driver hangs
+# forever in Init().
+#
+# Diagnosed by comparing GPIO state between a working and a failing run.
+# Failing (cold) had PWR low, i.e. the panel unpowered, and had to bring it
+# up itself. Working had PWR already high from a previous run, so the panel
+# was powered and settled before init began. Asserting PWR and waiting a few
+# seconds before init makes it work reliably from cold.
+#
+# 2s was verified working. Kept conservative -- this runs once at startup,
+# and the panel takes ~21s per refresh anyway, so a couple of seconds costs
+# nothing.
+POWER_SETTLE_SECONDS = 2.0
 
 _SO_NAME = "libepd10in85g.so"
 _SEARCH_DIRS = [
@@ -101,10 +122,20 @@ class EPD:
         self._lib.EPD_10in85g_Sleep.restype = None
         self._lib.DEV_Module_Exit.restype = None
 
-    def Init(self) -> None:
+    def Init(self, power_settle_seconds: float = POWER_SETTLE_SECONDS) -> None:
+        """Power the panel, let its rails stabilise, then initialise it.
+
+        The settle delay is the whole ballgame -- see POWER_SETTLE_SECONDS.
+        """
         rc = self._lib.DEV_Module_Init()
         if rc != 0:
             raise RuntimeError(f"DEV_Module_Init() failed with code {rc}")
+
+        # DEV_Module_Init() has just raised PWR. Give the panel's internal
+        # supply time to come up before resetting and configuring it.
+        logger.info("waiting %.1fs for panel power to settle", power_settle_seconds)
+        time.sleep(power_settle_seconds)
+
         self._lib.EPD_10in85g_Init()
 
     def Clear(self, color: int = WHITE_IDX) -> None:
