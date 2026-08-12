@@ -1,0 +1,14 @@
+apt install -y git build-essential
+cd ~
+git clone --depth 1 https://github.com/WiringPi/WiringPi.git
+cd WiringPi
+./build
+gpio -v
+
+
+cd ~
+git clone --depth 1 https://github.com/waveshare/e-Paper.git
+cd e-Paper/E-paper_Separate_Program/10.85inch_e-Paper_G/RaspberryPi/c
+make clean
+make -j4
+sudo ./epd

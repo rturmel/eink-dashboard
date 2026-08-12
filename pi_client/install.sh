@@ -39,8 +39,10 @@ python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
 # Hardware-only deps for the display driver -- not needed for dry-run/dev.
 # Raspberry Pi OS Bookworm moved to lgpio for GPIO access; older Bullseye
-# images still use RPi.GPIO. Try both so this works either way; the
-# waveshare_epd driver picks whichever is available at import time.
+# images still use RPi.GPIO. Installed for other/future panel models that
+# use them -- the 10.85" (G) panel itself doesn't: its driver instead loads
+# a precompiled DEV_Config_*.so via ctypes (vendored below), independent of
+# these.
 ./venv/bin/pip install spidev
 ./venv/bin/pip install RPi.GPIO || true
 ./venv/bin/pip install rpi-lgpio || true
@@ -62,8 +64,15 @@ if [ ! -d "waveshare_epd" ]; then
   separate_lib="$tmp_dir/e-Paper/E-paper_Separate_Program/10.85inch_e-Paper_G/RaspberryPi/python/lib"
   cp "$separate_lib/epd10in85g.py" ./waveshare_epd/epd10in85g.py
   cp "$separate_lib/epdconfig.py" ./waveshare_epd/epdconfig.py
+  # epdconfig.py's module_init() loads a precompiled DEV_Config_*.so via
+  # ctypes rather than using RPi.GPIO/lgpio -- it picks the right one at
+  # runtime based on getconf LONG_BIT (32/64) and whether /proc/cpuinfo
+  # says "Raspberry Pi 5" (a "_w" suffix) or not (a "_b" suffix), searching
+  # its own directory first. Vendor all four rather than guessing which
+  # one this install needs.
+  cp "$separate_lib"/DEV_Config_*.so ./waveshare_epd/
   rm -rf "$tmp_dir"
-  echo "vendored waveshare_epd/ next to client.py (epd10in85g.py + epdconfig.py from the separate-program source)"
+  echo "vendored waveshare_epd/ next to client.py (epd10in85g.py + epdconfig.py + DEV_Config_*.so from the separate-program source)"
 else
   echo "waveshare_epd/ already present, skipping clone"
 fi
