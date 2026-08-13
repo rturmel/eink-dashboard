@@ -49,13 +49,17 @@ class EPDDisplay:
 
         if not dry_run:
             try:
-                # Waveshare's Python driver for this panel hangs forever in
-                # Init(), waiting on BUSY after POWER_ON -- their C driver for
-                # the same panel works. So we call the C driver directly via
-                # ctypes rather than using their Python one. See the module
-                # docstring in epd10in85g_clib.py, including the gcc command
-                # that builds libepd10in85g.so.
-                import epd10in85g_clib as epd10in85g  # type: ignore
+                # Waveshare's stock driver, vendored by install.sh from their
+                # official demo package.
+                #
+                # This hangs forever in Init() on Raspberry Pi OS Trixie,
+                # waiting on BUSY after command 0x04 (POWER_ON), and works on
+                # Bookworm with no changes. If you are debugging a hang here,
+                # check your OS version first -- see PANEL_ISSUE_NOTES.md.
+                # epd10in85g_fixed.py and epd10in85g_clib.py in this directory
+                # are alternative drivers written during that investigation;
+                # neither is needed on a working install.
+                from waveshare_epd import epd10in85g  # type: ignore
 
                 self._epd = epd10in85g.EPD()
                 # Capitalized -- this panel's separate-program driver differs

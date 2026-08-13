@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
-# Sets up this repo's pi_client to run on a Raspberry Pi (tested target:
-# Raspberry Pi Zero WH, Raspberry Pi OS Bookworm) with the Waveshare
+# Sets up this repo's pi_client to run on a Raspberry Pi with the Waveshare
 # 10.85" e-Paper HAT+ (G) attached.
+#
+# !! OS REQUIREMENT: Raspberry Pi OS BOOKWORM (Debian 12) !!
+#
+# This panel does NOT work on Raspberry Pi OS Trixie (Debian 13). On Trixie
+# the driver hangs forever in Init(), waiting on BUSY after command 0x04
+# (POWER_ON) -- verified across two panels, two HAT+ boards, three Pi models,
+# both the WiringPi and bcm2835 GPIO backends, and eight driver stacks. The
+# identical hardware works immediately on Bookworm. See PANEL_ISSUE_NOTES.md.
 #
 # Run this FROM the pi_client/ directory, on the Pi itself:
 #   cd pi_client
@@ -12,26 +19,36 @@
 #   1. Enables SPI (required for the display HAT)
 #   2. Installs system packages (python3-venv, DejaVu fonts, git)
 #   3. Creates a venv and installs Python dependencies
-#   4. Clones Waveshare's official driver repo and vendors the
-#      epd10in85g module + its dependencies next to client.py. This panel
-#      is new/large enough that Waveshare ships its driver in a separate
-#      location (E-paper_Separate_Program/10.85inch_e-Paper_G/) from the
-#      shared waveshare_epd library everything else lives in -- both get
-#      vendored, with the separate-program epd10in85g.py/epdconfig.py
-#      pair taking precedence since they're the ones actually meant to
-#      work together.
+#   4. Downloads Waveshare's official demo package for this panel and vendors
+#      its Python driver next to client.py. Uses the .zip from their wiki
+#      rather than the GitHub repo -- their wiki recommends it, and the two
+#      are not necessarily the same revision.
 #   5. Copies config.example.yaml -> config.yaml if you don't have one yet
 #   6. Installs + enables the systemd service so the dashboard starts on boot
 
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Refuse to run on an OS this panel is known not to work on, rather than
+# leaving you to rediscover it the hard way.
+if [ -r /etc/os-release ]; then
+  . /etc/os-release
+  if [ "${VERSION_CODENAME:-}" != "bookworm" ]; then
+    echo "WARNING: detected '${VERSION_CODENAME:-unknown}', not bookworm." >&2
+    echo "The 10.85\" (G) panel does not initialise on Trixie -- Init() hangs" >&2
+    echo "at POWER_ON. See PANEL_ISSUE_NOTES.md. Continuing anyway in 10s;" >&2
+    echo "Ctrl+C to stop." >&2
+    sleep 10
+  fi
+fi
+
 echo "== 1/6: Enabling SPI =="
 sudo raspi-config nonint do_spi 0
 
 echo "== 2/6: Installing system packages =="
 sudo apt update
-sudo apt install -y python3-venv python3-pip fonts-dejavu-core git
+sudo apt install -y python3-venv python3-pip fonts-dejavu-core git \
+                    wget p7zip-full
 
 echo "== 3/6: Creating virtualenv and installing Python deps =="
 python3 -m venv venv
@@ -49,32 +66,40 @@ python3 -m venv venv
 
 echo "== 4/6: Vendoring the Waveshare e-Paper driver =="
 if [ ! -d "waveshare_epd" ]; then
-  # Cloned under $HOME rather than the system /tmp -- on a Pi Zero, /tmp is
-  # often a small tmpfs and this clone (full history-less, but still has
-  # every panel model's demo code) can be big enough to fill it.
+  # Waveshare's official demo package for this exact panel, from the product
+  # wiki. Deliberately NOT the GitHub repo: their wiki recommends the zip, the
+  # two are not necessarily the same revision, and the zip is what has been
+  # verified working here.
+  #
+  # Note the package ships epd10in85g.py + epdconfig.py + four precompiled
+  # DEV_Config_*.so variants. epdconfig.py picks the right .so at runtime from
+  # `getconf LONG_BIT` (32/64) and whether /proc/cpuinfo says "Raspberry Pi 5"
+  # (a "_w" suffix) or not (a "_b" suffix), searching its own directory first.
+  # Vendor all four rather than guessing.
+  zip_url="https://files.waveshare.com/wiki/10.85inch_e-Paper_HAT%2B_G/10.85inch_e-Paper_G.zip"
+
+  # Unpacked under $HOME rather than /tmp -- on a Pi Zero, /tmp is often a
+  # small tmpfs and this package can be big enough to fill it.
   tmp_dir=$(mktemp -d -p "$HOME")
-  git clone --depth 1 https://github.com/waveshare/e-Paper.git "$tmp_dir/e-Paper"
-  cp -r "$tmp_dir/e-Paper/RaspberryPi_JetsonNano/python/lib/waveshare_epd" ./waveshare_epd
-  # The 10.85" (G) panel isn't in the shared library above -- Waveshare
-  # ships it separately, as its own epd10in85g.py + a matching epdconfig.py
-  # (the low-level SPI/GPIO module every panel driver depends on). Overlay
-  # that matched pair on top rather than mixing epd10in85g.py with whatever
-  # epdconfig.py the shared library happened to vendor, since they're meant
-  # to travel together.
-  separate_lib="$tmp_dir/e-Paper/E-paper_Separate_Program/10.85inch_e-Paper_G/RaspberryPi/python/lib"
-  cp "$separate_lib/epd10in85g.py" ./waveshare_epd/epd10in85g.py
-  cp "$separate_lib/epdconfig.py" ./waveshare_epd/epdconfig.py
-  # epdconfig.py's module_init() loads a precompiled DEV_Config_*.so via
-  # ctypes rather than using RPi.GPIO/lgpio -- it picks the right one at
-  # runtime based on getconf LONG_BIT (32/64) and whether /proc/cpuinfo
-  # says "Raspberry Pi 5" (a "_w" suffix) or not (a "_b" suffix), searching
-  # its own directory first. Vendor all four rather than guessing which
-  # one this install needs.
-  cp "$separate_lib"/DEV_Config_*.so ./waveshare_epd/
+  wget -q -O "$tmp_dir/panel.zip" "$zip_url"
+  7z x -bso0 "$tmp_dir/panel.zip" -o"$tmp_dir/pkg"
+
+  src_lib="$tmp_dir/pkg/RaspberryPi/python/lib"
+  if [ ! -f "$src_lib/epd10in85g.py" ]; then
+    echo "ERROR: expected $src_lib/epd10in85g.py in the downloaded package." >&2
+    echo "Waveshare may have changed the package layout. Contents:" >&2
+    find "$tmp_dir/pkg" -maxdepth 3 -type d >&2
+    exit 1
+  fi
+
+  mkdir -p ./waveshare_epd
+  cp "$src_lib/epd10in85g.py" "$src_lib/epdconfig.py" ./waveshare_epd/
+  cp "$src_lib"/DEV_Config_*.so ./waveshare_epd/
+  touch ./waveshare_epd/__init__.py
   rm -rf "$tmp_dir"
-  echo "vendored waveshare_epd/ next to client.py (epd10in85g.py + epdconfig.py + DEV_Config_*.so from the separate-program source)"
+  echo "vendored waveshare_epd/ from Waveshare's official 10.85inch_e-Paper_G package"
 else
-  echo "waveshare_epd/ already present, skipping clone"
+  echo "waveshare_epd/ already present, skipping download"
 fi
 
 echo "== 5/6: Setting up config =="

@@ -184,6 +184,36 @@ In every success, the run was preceded by executing Waveshare's **Python** demo 
 
 ---
 
+## Statistical test matrix
+
+Because the fault is intermittent, single-attempt experiments are unreliable. A harness (`epd_matrix.c`) was written to run each variant repeatedly, de-energising the panel between attempts so each starts from an identical state, and to report success rates rather than anecdotes.
+
+"Success" means POWER_ON completed — the controller asserted BUSY and then released it. A run where BUSY is already high when first sampled is counted as a failure, not a success, since the command was evidently not acted upon.
+
+10 attempts per variant, 20s timeout, Raspberry Pi 3B on a 5.1V supply (`throttled=0x0`), WiringPi backend:
+
+| Variant | Description | Result | BUSY behaviour |
+|---|---|---|---|
+| `both` | vendor sequence, both controllers | 0/10 | asserted, never released |
+| `m` | CS_M only (master IC) | 0/10 | asserted, never released |
+| `s` | CS_S only (slave IC) | 0/10 | **never asserted** |
+| `nopoll` | fixed 15s delay, no BUSY polling | 0/10 | still low at 15s |
+| `retry` | POWER_ON sent 3×, 5s apart | 0/10 | asserted, never released |
+| `offon` | POWER_ON → 5s → POWER_OFF → 2s → POWER_ON | 0/10 | asserted, never released |
+| `cfg2` | configuration block sent twice | 0/10 | asserted, never released |
+
+The identical baseline run built against **bcm2835** instead of WiringPi also gives 0/10 with zero BUSY transitions, eliminating the GPIO backend and bit-banged SPI clock rate.
+
+### Master / slave asymmetry
+
+The one difference in the matrix: addressed to **CS_M**, the controller acknowledges POWER_ON by asserting BUSY (then never releases it). Addressed to **CS_S**, BUSY is never asserted at all — no response within 3s.
+
+This is consistent with the half-panel render, where only the master half updated.
+
+Caveat: on a dual-IC panel the BUSY line may be driven by the master controller alone, in which case a CS_S-only test would show no BUSY response regardless of slave health. Waveshare's pin table lists a single BUSY pin without specifying which IC drives it.
+
+---
+
 ## Unresolved contradiction
 
 Two runs of the same code path on the same hardware, minutes apart, disagree about whether POWER_ON completes:
@@ -239,3 +269,4 @@ In `pi_client/` of this repository:
 - `reset_panel.py` — recover the panel from a hung refresh, no busy waits so it cannot itself hang
 - `epd10in85g_fixed.py` — Python driver corrected to match the C driver's CS handling and reset timing
 - `epd10in85g_clib.py` — ctypes wrapper calling Waveshare's C driver directly
+- `epd_matrix.c` — statistical harness; runs a named variant N times with a clean reset between attempts and reports success rates
