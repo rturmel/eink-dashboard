@@ -7,11 +7,25 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=__PI_CLIENT_DIR__
 ExecStart=__PI_CLIENT_DIR__/venv/bin/python __PI_CLIENT_DIR__/client.py --config __PI_CLIENT_DIR__/config.yaml
+
+# Put the panel into deep sleep on stop, rather than leaving it energised.
+# Waveshare's precaution #1 for this panel: it must be slept or powered off
+# when not refreshing, or it sits in a high-voltage state that can damage the
+# film irreparably. Without this, every `systemctl stop` and every reboot
+# leaves it powered up mid-state.
+ExecStopPost=-__PI_CLIENT_DIR__/venv/bin/python __PI_CLIENT_DIR__/reset_panel.py
+
 Restart=on-failure
 RestartSec=5
 # The client itself retries the broker connection forever, so systemd
 # restarts are only a safety net for the process crashing outright.
-User=pi
+
+# Must be root. The vendored epdconfig.py loads a precompiled DEV_Config_*.so
+# built against the bcm2835 library, which maps /dev/mem directly for GPIO and
+# software SPI. Running as an unprivileged user does not fail cleanly -- the
+# mmap() returns NULL, the C code dereferences it unchecked, and the process
+# dies with SIGSEGV (status=11/SEGV) before any Python traceback appears.
+User=root
 
 [Install]
 WantedBy=multi-user.target

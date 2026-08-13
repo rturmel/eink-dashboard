@@ -1,5 +1,26 @@
 # Waveshare 10.85" e-Paper HAT+ (G) — technical notes
 
+## RESOLVED — Raspberry Pi OS version
+
+**The panel does not work on Raspberry Pi OS Trixie (Debian 13). It works on Bookworm (Debian 12) with no other changes.**
+
+On Trixie, `Init()` hangs forever waiting on BUSY after command `0x04` (POWER_ON). On Bookworm, the identical hardware initialises and refreshes correctly on the first attempt — Waveshare's C demo, their Python demo, and this project's client all work unmodified.
+
+Everything below documents the investigation that preceded this. It is left intact because the exclusions are useful: two panels, two HAT+ boards, three Raspberry Pi models, eight driver stacks, both GPIO backends, four power supplies, and a 70-attempt statistical matrix were all eliminated before the OS was suspected.
+
+Setup that works:
+
+- Raspberry Pi OS **Bookworm** (Debian 12), 32-bit Lite
+- Raspberry Pi 3 Model B, 5.1V regulated supply (`throttled=0x0`)
+- SPI enabled, WiringPi 3.18
+- Waveshare's official demo package from the product wiki (`10.85inch_e-Paper_G.zip`), not the GitHub repo
+
+Not yet isolated: whether Bookworm alone is sufficient, or whether the official zip also differs from GitHub `master`. Both were changed at the same time. Building the GitHub sources on Bookworm would settle it.
+
+The intermittent successes on Trixie (see Anomalies below) remain unexplained.
+
+---
+
 Working notes on a panel that will not complete its power-on sequence. Written for research and for asking others; no conclusions drawn about cause or fault.
 
 ---
