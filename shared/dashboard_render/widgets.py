@@ -32,6 +32,17 @@ Box = tuple[int, int, int, int]  # x, y, w, h
 
 PADDING = 14
 
+# Color of the small caps widget titles ("INDOOR", "ROOM SENSORS", ...).
+#
+# Red rather than black on purpose: the panel is a 4-color device and reads
+# as a wall of black text otherwise. Titles are a good candidate for color
+# because they are structural rather than data -- coloring them separates
+# labels from values at a glance without spending red on anything that needs
+# to stay legible at small sizes or carry meaning (alerts, chart series).
+#
+# Must be one of the four panel colors -- see palette.py.
+TITLE_COLOR = "red"
+
 # Static images (logos, etc.) that ship with the code rather than getting
 # pushed through the broker on every update -- drop a file here and
 # reference it from a widget as {"asset": "logo.png"}. See draw_image().
@@ -130,7 +141,7 @@ def _title_bar(ctx: Ctx, title: str) -> int:
     Returns the y-coordinate where content should start below it."""
     x, y, w, h = _inset(ctx.box)
     font = get_font(14, bold=True)
-    ctx.draw.text((x, y), title.upper(), font=font, fill=palette.color("black"))
+    ctx.draw.text((x, y), title.upper(), font=font, fill=palette.color(TITLE_COLOR))
     return y + 22
 
 
@@ -993,7 +1004,7 @@ def draw_pie_chart(ctx: Ctx) -> None:
         # it, instead of _title_bar's normal left-aligned fieldset style.
         title_font = get_font(14, bold=True)
         ctx.draw.text(
-            (x + w / 2, inset_y), title.upper(), font=title_font, fill=palette.color("black"), anchor="ma"
+            (x + w / 2, inset_y), title.upper(), font=title_font, fill=palette.color(TITLE_COLOR), anchor="ma"
         )
         y0 = inset_y + 22
     elif title:
@@ -1130,6 +1141,13 @@ def draw_panel(ctx: Ctx) -> None:
     ctx.draw.rectangle([l, t, r, b], outline=color, width=line_w)
 
     if title:
+        # Label color is deliberately independent of the border color: the
+        # border wants to stay quiet (black hairline) while the label is the
+        # widget's name and benefits from standing out. Defaults to
+        # TITLE_COLOR so panel labels match the in-widget titles drawn by
+        # _title_bar(); override per-widget with `title_color` in layout.yaml.
+        label_color = palette.color(ctx.style.get("title_color", TITLE_COLOR))
+
         font = get_font(13, bold=True)
         label = str(title).upper()
         tw, th = _text_size(ctx.draw, label, font)
@@ -1142,7 +1160,7 @@ def draw_panel(ctx: Ctx) -> None:
             [label_x - pad, label_cy - th / 2 - pad, label_x + tw + pad, label_cy + th / 2 + pad],
             fill=palette.color("white"),
         )
-        ctx.draw.text((label_x, label_cy), label, font=font, fill=color, anchor="lm")
+        ctx.draw.text((label_x, label_cy), label, font=font, fill=label_color, anchor="lm")
 
 
 WIDGET_REGISTRY: dict[str, Callable[[Ctx], None]] = {
