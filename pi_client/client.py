@@ -42,6 +42,7 @@ sys.path.insert(0, str(BASE_DIR.parent / "shared"))
 from dashboard_render import render_dashboard  # noqa: E402
 
 from epd_display import EPDDisplay  # noqa: E402
+from ip_overlay import draw_ip_bar  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s pi_client: %(message)s"
@@ -165,9 +166,32 @@ class DashboardClient:
 
         loop = asyncio.get_running_loop()
         image = await loop.run_in_executor(None, render_dashboard, self.layout, state)
+
+        # Composited here rather than inside render_dashboard: the IP belongs
+        # to this Pi, not to the dashboard, so the browser preview must not
+        # show it (it would be the server's address, not the panel's).
+        if self.cfg.get("show_ip_bar", True):
+            image = await loop.run_in_executor(None, self._add_ip_bar, image)
+
         await loop.run_in_executor(None, self.display.show, image)
         self._last_refresh = time.monotonic()
         log.info("refreshed panel")
+
+    def _add_ip_bar(self, image):
+        """Draw the footer bar, never letting it break a frame.
+
+        A failure here (no route, odd font metrics) should cost you the IP
+        readout, not the whole dashboard -- so it degrades to the unmodified
+        frame rather than raising into the refresh path.
+        """
+        try:
+            return draw_ip_bar(
+                image,
+                font_size=int(self.cfg.get("ip_bar_font_size", 14)),
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("failed to draw IP bar; showing frame without it")
+            return image
 
     async def force_refresh_loop(self) -> None:
         interval = float(self.cfg.get("force_refresh_seconds", 6 * 3600))

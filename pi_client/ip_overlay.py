@@ -1,0 +1,130 @@
+"""
+Footer bar showing this Pi's own IP address.
+
+Entirely local to pi_client. The IP is read from this machine's own routing
+table -- the broker is never consulted, never contacted, and has no idea the
+bar exists. That matters because the address is most useful precisely when
+the broker is unreachable and you need to get at the Pi.
+
+Not part of shared/dashboard_render for the same reason: the browser preview
+would show the preview server's address, which is meaningless.
+
+Composited over the bottom of the finished frame, so no layout change is
+needed and existing widgets keep their full grid area.
+
+EDGE CRISPNESS
+--------------
+The bar must have hard edges -- no anti-aliased or dithered transition
+between the white frame and the black bar. Three things guarantee that:
+
+  * the rectangle is drawn on exact integer pixel bounds, so no partial
+    coverage of any pixel;
+  * the fill and text use exact palette colors, so quantization is a no-op
+    for them;
+  * the final pass is palette.quantize_exact(), which is nearest-color with
+    dithering explicitly OFF. A dithering pass would scatter red/yellow
+    speckle along the boundary.
+
+Text anti-aliasing is the one source of off-palette pixels, and it is
+confined to the glyphs, snapped to black or white by the same pass.
+"""
+
+from __future__ import annotations
+
+import logging
+import socket
+import sys
+from pathlib import Path
+
+from PIL import Image, ImageDraw
+
+BASE_DIR = Path(__file__).resolve().parent
+if str(BASE_DIR.parent / "shared") not in sys.path:
+    sys.path.insert(0, str(BASE_DIR.parent / "shared"))
+
+from dashboard_render import palette  # noqa: E402
+from dashboard_render.fonts import get_font  # noqa: E402
+
+log = logging.getLogger("ip_overlay")
+
+DEFAULT_FONT_SIZE = 14
+
+# Above and below the text; bar height = text height + 2 * this.
+PADDING_PX = 2
+
+# Gap between the text and the right edge of the panel.
+RIGHT_MARGIN_PX = 6
+
+
+def get_local_ip() -> str:
+    """This Pi's address on whichever interface carries its default route.
+
+    Opens a UDP socket toward a routable address and asks the kernel which
+    local address it would send from. connect() on UDP only sets a default
+    destination -- no packets leave the machine, nothing is contacted, and it
+    works with no internet connection as long as a default route exists.
+
+    The probe address is arbitrary and never receives traffic; it exists only
+    to select a route.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.settimeout(0.5)
+        sock.connect(("8.8.8.8", 80))
+        return str(sock.getsockname()[0])
+    except OSError:
+        pass
+    finally:
+        sock.close()
+
+    try:
+        # Fallback. Often 127.0.0.1 on Debian, hence being second.
+        return socket.gethostbyname(socket.gethostname())
+    except OSError:
+        return "no network"
+
+
+def draw_ip_bar(
+    image: Image.Image,
+    text: str | None = None,
+    font_size: int = DEFAULT_FONT_SIZE,
+) -> Image.Image:
+    """Composite a full-width footer bar, white text on black, right-aligned.
+
+    Returns the image, modified in place and re-quantized to the panel's
+    four colors.
+    """
+    if text is None:
+        text = get_local_ip()
+
+    width, height = image.size
+    draw = ImageDraw.Draw(image)
+    font = get_font(font_size, bold=False)
+
+    # Measure the glyphs actually being drawn rather than the font's nominal
+    # size -- ascent/descent vary by face, and the padding should be 2px
+    # around the visible text, not around the em box.
+    left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
+    text_w = right - left
+    text_h = bottom - top
+
+    bar_h = text_h + PADDING_PX * 2
+    bar_top = height - bar_h
+
+    # Integer bounds, inclusive of the last row/column: no pixel is partially
+    # covered, so the edge cannot be soft.
+    draw.rectangle(
+        [0, bar_top, width - 1, height - 1],
+        fill=palette.color("black"),
+    )
+
+    # textbbox offsets are subtracted so the glyphs land where intended --
+    # `top` is usually non-zero, and ignoring it shifts the text down and
+    # breaks the 2px padding.
+    text_x = width - RIGHT_MARGIN_PX - text_w - left
+    text_y = bar_top + PADDING_PX - top
+
+    draw.text((text_x, text_y), text, font=font, fill=palette.color("white"))
+
+    # Nearest-color, dithering off -- see the module docstring.
+    return palette.quantize_exact(image)

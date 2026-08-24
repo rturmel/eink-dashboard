@@ -25,3 +25,16 @@ dry_run_output: "./preview_frame.png"
 # 0, 90, 180, or 270 -- rotate the final image if the panel is mounted
 # sideways or upside-down in your case.
 rotate_degrees: 0
+
+# Footer bar across the bottom of the panel showing this Pi's IP address,
+# white on black. Drawn on the Pi after rendering, so it does NOT appear in
+# the browser preview (which would otherwise show the preview server's
+# address, not the panel's) and it still shows when the broker is
+# unreachable -- which is exactly when you want to know how to reach the Pi.
+#
+# It overlays the bottom few pixels of the frame rather than shrinking the
+# grid, so widgets flush with the bottom edge may be slightly clipped.
+show_ip_bar: true
+
+# Bar height is this text height plus 2px padding above and below.
+ip_bar_font_size: 14
