@@ -188,6 +188,7 @@ class DashboardClient:
             return draw_ip_bar(
                 image,
                 font_size=int(self.cfg.get("ip_bar_font_size", 14)),
+                offset_px=int(self.cfg.get("ip_bar_offset_px", 0)),
             )
         except Exception:  # noqa: BLE001
             log.exception("failed to draw IP bar; showing frame without it")

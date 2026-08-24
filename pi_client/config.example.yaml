@@ -38,3 +38,9 @@ show_ip_bar: true
 
 # Bar height is this text height plus 2px padding above and below.
 ip_bar_font_size: 14
+
+# Raise the bar this many pixels off the bottom edge. A panel mounted in a
+# case or frame usually has its outermost rows covered by the lip, so a bar
+# flush with the edge can be invisible even though it is being drawn. Increase
+# until it clears the frame. Whatever the dashboard drew underneath stays put.
+ip_bar_offset_px: 0

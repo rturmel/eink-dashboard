@@ -55,6 +55,12 @@ PADDING_PX = 2
 # Gap between the text and the right edge of the panel.
 RIGHT_MARGIN_PX = 6
 
+# Raise the bar this many pixels off the bottom edge. Mounted panels are
+# usually held in a frame or case whose lip covers the outermost rows, so
+# a bar flush with the bottom edge can be physically hidden even though it
+# is present in the frame. Raising it moves it into the visible area.
+DEFAULT_OFFSET_PX = 0
+
 
 def get_local_ip() -> str:
     """This Pi's address on whichever interface carries its default route.
@@ -88,8 +94,14 @@ def draw_ip_bar(
     image: Image.Image,
     text: str | None = None,
     font_size: int = DEFAULT_FONT_SIZE,
+    offset_px: int = DEFAULT_OFFSET_PX,
 ) -> Image.Image:
     """Composite a full-width footer bar, white text on black, right-aligned.
+
+    `offset_px` raises the bar off the bottom edge, for panels whose mounting
+    frame covers the outermost rows. Whatever the dashboard drew below the
+    bar stays visible (or stays hidden behind the frame lip, which is the
+    point).
 
     Returns the image, modified in place and re-quantized to the panel's
     four colors.
@@ -109,12 +121,16 @@ def draw_ip_bar(
     text_h = bottom - top
 
     bar_h = text_h + PADDING_PX * 2
-    bar_top = height - bar_h
+
+    # Clamp so a large offset can't push the bar off the top of the frame.
+    offset_px = max(0, min(int(offset_px), height - bar_h))
+    bar_bottom = height - 1 - offset_px
+    bar_top = bar_bottom - bar_h + 1
 
     # Integer bounds, inclusive of the last row/column: no pixel is partially
     # covered, so the edge cannot be soft.
     draw.rectangle(
-        [0, bar_top, width - 1, height - 1],
+        [0, bar_top, width - 1, bar_bottom],
         fill=palette.color("black"),
     )
 
@@ -123,6 +139,7 @@ def draw_ip_bar(
     # breaks the 2px padding.
     text_x = width - RIGHT_MARGIN_PX - text_w - left
     text_y = bar_top + PADDING_PX - top
+
 
     draw.text((text_x, text_y), text, font=font, fill=palette.color("white"))
 
